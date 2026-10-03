@@ -1,0 +1,427 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d0a14">
+<meta name="robots" content="noindex">
+<title>Door Scanner</title>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+  :root {
+    --bg: #0d0a14; --panel: #1a1325; --line: #3a2a52; --text: #f3eefc; --muted: #b9a7d6;
+    --orange: #ff7a18; --ok: #18a957; --bad: #d62839; --warn: #e89a10; --unknown: #5b5570;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 12px 16px; border-bottom: 1px solid var(--line);
+  }
+  header h1 { font-size: 18px; margin: 0; color: var(--orange); }
+  .stats { font-size: 13px; color: var(--muted); white-space: nowrap; }
+  main { padding: 16px; max-width: 520px; margin: 0 auto; }
+  button, input {
+    font: inherit; color: inherit; border-radius: 12px; border: 1px solid var(--line);
+    background: var(--panel); padding: 12px 14px;
+  }
+  button { cursor: pointer; font-weight: 600; }
+  button.primary { background: var(--orange); border-color: var(--orange); color: #1b0d00; }
+  button.big { width: 100%; padding: 18px; font-size: 20px; }
+  button.ghost { background: transparent; }
+  button:disabled { opacity: .5; }
+  input { width: 100%; }
+  label { display: block; font-size: 14px; color: var(--muted); margin: 14px 0 6px; }
+  .icon-btn { padding: 8px 10px; font-size: 18px; line-height: 1; }
+
+  #reader { width: 100%; border-radius: 16px; overflow: hidden; background: #000; min-height: 260px; }
+  #reader video { object-fit: cover; }
+  .hint { text-align: center; color: var(--muted); margin: 12px 0; font-size: 14px; }
+  .manual { display: flex; gap: 8px; margin-top: 8px; }
+  .manual input { text-transform: uppercase; letter-spacing: 1px; }
+  .err { color: #ff8a95; font-size: 14px; min-height: 1.4em; margin-top: 8px; }
+
+  /* Result overlay */
+  #result {
+    position: fixed; inset: 0; display: none; flex-direction: column;
+    padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+    overflow-y: auto;
+  }
+  #result.show { display: flex; }
+  #result.ok { background: var(--ok); }
+  #result.bad { background: var(--bad); }
+  #result.warn { background: var(--warn); color: #1d1300; }
+  #result.unknown, #result.loading { background: var(--unknown); }
+  .verdict { text-align: center; margin-top: 4vh; }
+  .verdict .emoji { font-size: 64px; line-height: 1; }
+  .verdict h2 { font-size: clamp(32px, 11vw, 56px); margin: 8px 0 0; letter-spacing: 1px; line-height: 1.05; }
+  .verdict .sub { font-size: 18px; margin-top: 6px; opacity: .92; }
+  .card {
+    background: rgba(0,0,0,.22); border-radius: 16px; padding: 16px; margin: 24px auto 0;
+    width: 100%; max-width: 520px; color: #fff;
+  }
+  #result.warn .card { color: #1d1300; background: rgba(255,255,255,.35); }
+  .card .name { font-size: 26px; font-weight: 700; word-break: break-word; }
+  .card .id { font-family: ui-monospace, Menlo, Consolas, monospace; opacity: .85; margin-top: 2px; }
+  .card dl { margin: 12px 0 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; font-size: 15px; }
+  .card dt { opacity: .8; }
+  .card dd { margin: 0; word-break: break-word; }
+  .actions { margin: 24px auto 0; width: 100%; max-width: 520px; display: grid; gap: 10px; }
+  .actions button { border: 0; }
+  .actions .admit { background: #fff; color: #0b3d22; }
+  .actions .collect { background: #fff; color: #7a0f1b; }
+  .actions .next { background: rgba(0,0,0,.28); color: #fff; }
+  #result.warn .actions .next { color: #1d1300; background: rgba(255,255,255,.4); }
+
+  /* Settings dialog */
+  dialog {
+    background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 16px;
+    width: min(480px, calc(100vw - 32px)); padding: 20px;
+  }
+  dialog::backdrop { background: rgba(0,0,0,.7); }
+  dialog h3 { margin: 0 0 4px; color: var(--orange); }
+  dialog p { margin: 0; color: var(--muted); font-size: 14px; }
+  .row { display: flex; gap: 8px; margin-top: 18px; justify-content: flex-end; flex-wrap: wrap; }
+  .status { font-size: 14px; margin-top: 10px; min-height: 1.4em; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🎃 Door Scanner</h1>
+  <div style="display:flex;align-items:center;gap:10px;">
+    <span class="stats" id="stats"></span>
+    <button class="icon-btn ghost" id="openSettings" aria-label="Settings">⚙️</button>
+  </div>
+</header>
+
+<main>
+  <div id="reader"></div>
+  <p class="hint" id="hint">Point the camera at the guest's QR code</p>
+  <button class="big primary" id="startBtn" style="display:none">Start camera</button>
+
+  <label for="manualId">Can't scan? Type the Guest ID</label>
+  <form class="manual" id="manualForm">
+    <input id="manualId" placeholder="SD-XXXXX-XXXXX" autocomplete="off" autocapitalize="characters" spellcheck="false">
+    <button class="primary" type="submit">Check</button>
+  </form>
+  <div class="err" id="err"></div>
+</main>
+
+<section id="result" aria-live="assertive">
+  <div class="verdict">
+    <div class="emoji" id="rEmoji"></div>
+    <h2 id="rTitle"></h2>
+    <div class="sub" id="rSub"></div>
+  </div>
+  <div class="card" id="rCard">
+    <div class="name" id="rName"></div>
+    <div class="id" id="rId"></div>
+    <dl id="rDetails"></dl>
+  </div>
+  <div class="actions" id="rActions"></div>
+</section>
+
+<dialog id="settings">
+  <form method="dialog" id="settingsForm">
+    <h3>Scanner settings</h3>
+    <p>Get these from the party organizer. They're saved on this device only.</p>
+    <label for="apiUrl">Web app URL</label>
+    <input id="apiUrl" type="url" placeholder="https://script.google.com/macros/s/…/exec" required>
+    <label for="pin">Bouncer PIN</label>
+    <input id="pin" type="password" autocomplete="off" required>
+    <div class="status" id="settingsStatus"></div>
+    <div class="row">
+      <button type="button" class="ghost" id="cancelSettings">Cancel</button>
+      <button type="submit" class="primary" id="saveSettings" value="save">Save &amp; test</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var LS_KEY = 'strangerDanger.scanner';
+
+  function load() {
+    try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}; } catch (e) { return {}; }
+  }
+  function save(cfg) {
+    try { localStorage.setItem(LS_KEY, JSON.stringify(cfg)); } catch (e) { /* private mode */ }
+  }
+
+  var cfg = load();
+
+  // Organizers can share a one-tap setup link: …/#api=<url>&pin=<pin>
+  if (location.hash.length > 1) {
+    var hp = new URLSearchParams(location.hash.slice(1));
+    if (hp.get('api')) cfg.api = hp.get('api');
+    if (hp.get('pin')) cfg.pin = hp.get('pin');
+    save(cfg);
+    history.replaceState(null, '', location.pathname + location.search);
+  }
+
+  // ---------- API ----------
+  var ERRORS = {
+    bad_pin: 'Wrong PIN. Check the settings (⚙️).',
+    pin_not_set: 'The organizer has not set a PIN yet (🎃 Party → Run setup).',
+    too_many_attempts: 'Too many wrong PINs. Wait 10 minutes.',
+    unknown_action: 'Scanner and script versions do not match.'
+  };
+
+  function api(params) {
+    if (!cfg.api || !cfg.pin) return Promise.reject(new Error('Open settings (⚙️) and enter the web app URL and PIN.'));
+    var qs = new URLSearchParams(Object.assign({ pin: cfg.pin }, params));
+    return fetch(cfg.api + (cfg.api.indexOf('?') === -1 ? '?' : '&') + qs.toString(), { redirect: 'follow' })
+      .then(function (r) {
+        if (!r.ok) throw new Error('Server error ' + r.status);
+        return r.json();
+      })
+      .catch(function (e) {
+        if (e instanceof SyntaxError || e.name === 'TypeError') {
+          throw new Error('Could not reach the server. Check the internet connection and the web app URL.');
+        }
+        throw e;
+      })
+      .then(function (res) {
+        if (!res.ok && ERRORS[res.error]) throw new Error(ERRORS[res.error]);
+        return res;
+      });
+  }
+
+  function refreshStats() {
+    if (!cfg.api || !cfg.pin) return;
+    api({ action: 'stats' }).then(function (res) {
+      if (res.ok) showStats(res.stats);
+    }).catch(function () {});
+  }
+  function showStats(s) {
+    if (s) $('stats').textContent = s.checkedIn + ' in · ' + s.paid + ' paid · ' + s.registered + ' reg';
+  }
+
+  // ---------- Feedback ----------
+  var audioCtx;
+  function beep(kind) {
+    try {
+      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+      var tones = kind === 'ok' ? [880, 1320] : kind === 'warn' ? [520, 520] : [220, 160];
+      tones.forEach(function (f, i) {
+        var o = audioCtx.createOscillator(), g = audioCtx.createGain();
+        o.frequency.value = f; o.type = kind === 'ok' ? 'sine' : 'square';
+        g.gain.value = 0.08;
+        o.connect(g); g.connect(audioCtx.destination);
+        var t = audioCtx.currentTime + i * 0.16;
+        o.start(t); o.stop(t + 0.13);
+      });
+    } catch (e) { /* no audio */ }
+    if (navigator.vibrate) navigator.vibrate(kind === 'ok' ? 80 : [200, 80, 200]);
+  }
+
+  // ---------- Scanner ----------
+  var scanner = null, busy = false;
+
+  function startScanner() {
+    $('startBtn').style.display = 'none';
+    $('hint').textContent = 'Starting camera…';
+    if (!window.Html5Qrcode) {
+      $('hint').textContent = 'Scanner library failed to load. Check the internet connection and reload.';
+      return;
+    }
+    scanner = scanner || new Html5Qrcode('reader', { formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE], verbose: false });
+    scanner.start(
+      { facingMode: 'environment' },
+      { fps: 12, qrbox: function (w, h) { var s = Math.floor(Math.min(w, h) * 0.75); return { width: s, height: s }; } },
+      onScan,
+      function () {}
+    ).then(function () {
+      $('hint').textContent = "Point the camera at the guest's QR code";
+    }).catch(function (e) {
+      $('hint').textContent = 'Camera unavailable: ' + (e && e.message || e) + '. Allow camera access, or type the ID below.';
+      $('startBtn').style.display = 'block';
+    });
+  }
+
+  function pauseScanner() {
+    try { if (scanner && scanner.getState() === Html5QrcodeScannerState.SCANNING) scanner.pause(true); } catch (e) {}
+  }
+  function resumeScanner() {
+    try { if (scanner && scanner.getState() === Html5QrcodeScannerState.PAUSED) scanner.resume(); } catch (e) {}
+  }
+
+  function onScan(text) {
+    if (busy) return;
+    lookup(text);
+  }
+
+  // ---------- Result screen ----------
+  function el(tag, text, cls) {
+    var e = document.createElement(tag);
+    if (text != null) e.textContent = text;
+    if (cls) e.className = cls;
+    return e;
+  }
+
+  function showResult(state, opts) {
+    var r = $('result');
+    r.className = 'show ' + state;
+    $('rEmoji').textContent = opts.emoji || '';
+    $('rTitle').textContent = opts.title || '';
+    $('rSub').textContent = opts.sub || '';
+
+    var g = opts.guest;
+    $('rCard').style.display = g ? '' : 'none';
+    var dl = $('rDetails');
+    dl.textContent = '';
+    if (g) {
+      $('rName').textContent = g.name || '(no name)';
+      $('rId').textContent = g.id;
+      var rows = [];
+      if (g.email) rows.push({ label: 'Email', value: g.email });
+      if (g.checkedInAt) rows.push({ label: 'Checked in', value: g.checkedInAt });
+      if (g.notes) rows.push({ label: 'Notes', value: g.notes });
+      rows.concat(g.details || []).forEach(function (d) {
+        dl.appendChild(el('dt', d.label));
+        dl.appendChild(el('dd', d.value));
+      });
+    }
+
+    var actions = $('rActions');
+    actions.textContent = '';
+    (opts.actions || []).forEach(function (a) {
+      var b = el('button', a.label, 'big ' + a.cls);
+      b.addEventListener('click', function () {
+        if (a.busyLabel) { b.disabled = true; b.textContent = a.busyLabel; }
+        a.onClick();
+      });
+      actions.appendChild(b);
+    });
+    var next = el('button', opts.nextLabel || 'Next guest', 'big next');
+    next.addEventListener('click', closeResult);
+    actions.appendChild(next);
+  }
+
+  function closeResult() {
+    $('result').className = '';
+    busy = false;
+    $('manualId').value = '';
+    resumeScanner();
+  }
+
+  function renderGuest(res, id) {
+    var g = res.guest;
+    if (!res.ok && res.error === 'not_found') {
+      beep('bad');
+      return showResult('unknown', {
+        emoji: '❓', title: 'UNKNOWN CODE',
+        sub: 'This QR is not on the guest list. Do not admit.'
+      });
+    }
+    if (!res.ok && !g) throw new Error(res.error || 'Unexpected response');
+
+    if (g.checkedIn) {
+      beep('warn');
+      return showResult('warn', {
+        emoji: '⚠️', title: res.admitted ? 'ADMITTED' : 'ALREADY IN',
+        sub: res.admitted ? 'Checked in just now.' : 'This code was already used at ' + g.checkedInAt + '. Possible duplicate.',
+        guest: g
+      });
+    }
+    if (g.paid) {
+      beep('ok');
+      return showResult('ok', {
+        emoji: '✅', title: 'PAID', sub: 'Good to go.', guest: g,
+        nextLabel: 'Cancel',
+        actions: [{ label: 'Admit & check in', cls: 'admit', busyLabel: 'Checking in…', onClick: function () { admit(id, false); } }]
+      });
+    }
+    beep('bad');
+    return showResult('bad', {
+      emoji: '⛔', title: 'NOT PAID', sub: 'Collect payment before letting them in.', guest: g,
+      nextLabel: 'Deny / next guest',
+      actions: [{ label: 'Payment collected → admit', cls: 'collect', busyLabel: 'Saving…', onClick: function () { admit(id, true); } }]
+    });
+  }
+
+  function showError(msg) {
+    beep('bad');
+    showResult('unknown', { emoji: '📡', title: 'ERROR', sub: msg, nextLabel: 'Back' });
+  }
+
+  function lookup(raw) {
+    var id = String(raw || '').trim();
+    if (!id) return;
+    busy = true;
+    pauseScanner();
+    $('err').textContent = '';
+    showResult('loading', { emoji: '🔍', title: 'Checking…', sub: id, nextLabel: 'Cancel' });
+    api({ action: 'lookup', id: id })
+      .then(function (res) { renderGuest(res, id); })
+      .catch(function (e) { showError(e.message); });
+  }
+
+  function admit(id, collect) {
+    api({ action: 'admit', id: id, collect: collect ? '1' : '0' })
+      .then(function (res) {
+        if (res.ok && res.admitted) {
+          beep('ok');
+          showResult('ok', {
+            emoji: '🎉', title: 'WELCOME IN', sub: collect ? 'Payment recorded and checked in.' : 'Checked in.',
+            guest: res.guest
+          });
+          refreshStats();
+          setTimeout(function () { if ($('result').classList.contains('ok')) closeResult(); }, 2500);
+        } else {
+          renderGuest(res, id);
+        }
+      })
+      .catch(function (e) { showError(e.message); });
+  }
+
+  // ---------- Settings ----------
+  function openSettings() {
+    $('apiUrl').value = cfg.api || '';
+    $('pin').value = cfg.pin || '';
+    $('settingsStatus').textContent = '';
+    $('settings').showModal();
+  }
+  $('openSettings').addEventListener('click', openSettings);
+  $('cancelSettings').addEventListener('click', function () { $('settings').close(); });
+  $('settingsForm').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var next = { api: $('apiUrl').value.trim(), pin: $('pin').value };
+    var prev = cfg;
+    cfg = next;
+    $('settingsStatus').textContent = 'Testing…';
+    $('saveSettings').disabled = true;
+    api({ action: 'ping' }).then(function (res) {
+      if (!res.ok) throw new Error(res.error || 'Unexpected response');
+      save(cfg);
+      showStats(res.stats);
+      $('settingsStatus').textContent = '';
+      $('settings').close();
+    }).catch(function (e) {
+      cfg = prev;
+      $('settingsStatus').textContent = '❌ ' + e.message;
+    }).then(function () { $('saveSettings').disabled = false; });
+  });
+
+  $('manualForm').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    $('manualId').blur();
+    lookup($('manualId').value);
+  });
+  $('startBtn').addEventListener('click', startScanner);
+
+  // ---------- Boot ----------
+  if (!cfg.api || !cfg.pin) openSettings(); else refreshStats();
+  setInterval(refreshStats, 60000);
+  startScanner();
+})();
+</script>
+</body>
+</html>
