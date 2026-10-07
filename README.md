@@ -13,13 +13,14 @@ Google Form ──► Google Sheet ──► Apps Script ──► 📧 QR email
 
 - **Database:** the Google Sheet that holds the form responses. The script adds these columns: `Guest ID`, `Paid`, `QR Emailed At`, `Checked In At` and `Door Notes`.
 - **QR code:** encodes a random, permanent Guest ID such as `SD-7K3MX-Q9P2A`. It's created once per registration and never changes. Resending the email sends the same code.
-- **Email:** a formatted Halloween-themed HTML email. The QR code is shown inline and also attached as a PNG.
+- **Email:** styled after the event poster as a "WANTED" notice. The guest's QR code sits in the mugshot frame with their name and ID on the placard, followed by the party details and their payment status. The QR code is also attached as a PNG.
 - **Scanner:** a mobile web page that shows a full-screen **PAID** (green), **NOT PAID** (red), **ALREADY IN** (amber) or **UNKNOWN CODE** (grey) result, with the guest's details. The bouncer then taps *Admit*. For guests who haven't paid, the bouncer can tap *Payment collected → admit*.
 
 | Path | What it is |
 |---|---|
 | `apps-script/Code.gs` | Everything that runs on the Google side: form trigger, ID and QR generation, email, sheet menu and the bouncer API |
 | `docs/index.html` | The bouncer's scanner page, a single static file |
+| `docs/email/header.jpg` | The distressed "WANTED / DEAD OR ALIVE" header cut from the event poster, used at the top of the email |
 
 ---
 
@@ -33,7 +34,8 @@ In the **Responses** tab, click **Link to Sheets** and create a new spreadsheet.
 ### 2. Apps Script
 1. In the responses spreadsheet, open **Extensions → Apps Script**.
 2. Replace the contents of `Code.gs` with [`apps-script/Code.gs`](apps-script/Code.gs).
-3. Edit the `CONFIG` block at the top: event name, date, venue, price, payment instructions and sign-off.
+3. Check the `CONFIG` block at the top. It's pre-filled from the poster (venue, date, time, door fee, highlights, DJ); change anything that differs.
+   - `EMAIL_HEADER_IMAGE_URL` points at `docs/email/header.jpg` on GitHub. That link only works while the repo is **public**. For a private repo, upload `header.jpg` somewhere public (e.g. GitHub Pages or an image host) and put that link here. If the image can't be loaded, the email falls back to a plain-text WANTED header.
 4. Save, then reload the spreadsheet. A **🎃 Party** menu appears.
 5. Click **🎃 Party → Run setup** and approve the permissions Google asks for. Setup does three things:
    - adds the extra columns,
