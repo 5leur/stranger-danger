@@ -13,16 +13,24 @@
 
 // ===================== Edit these for your event =====================
 const CONFIG = {
-  EVENT_NAME: 'Stranger Danger: A Halloween Party',
-  EVENT_DATE: 'Saturday, October 31, 2026 · 9:00 PM',
-  EVENT_VENUE: 'Venue to be announced',
-  TICKET_PRICE: '',            // e.g. '₱500' — leave blank to hide
+  EVENT_NAME: 'Stranger Danger',
+  EVENT_EDITION: 'Year 2',
+  EVENT_TAGLINE: 'Halloween Party',
+  EVENT_HIGHLIGHTS: 'Food | Booze | Prizes | Costumes',
+  MUSIC_BY: 'GAAART',          // leave blank to hide
+  EVENT_DATE: 'October 31, 2026',
+  EVENT_TIME: '8:00 PM',
+  EVENT_VENUE: 'Providence Town Homes',
+  TICKET_PRICE: '1200',        // big number on the email — leave blank to hide
+  TICKET_PRICE_LABEL: 'Door fee',
   PAYMENT_INSTRUCTIONS:
     'Please settle your payment with the organizers before the party. ' +
     'Guests who have not paid will be asked to pay at the door.',
-  DRESS_CODE: 'Costumes strongly encouraged. Come as your scariest self.',
   ORGANIZER_NAME: 'The Stranger Danger Crew',
   REPLY_TO: '',                // optional reply-to address for the email
+  // Distressed "WANTED / DEAD OR ALIVE" header cut from the poster
+  // (docs/email/header.jpg). If it can't be fetched, a text header is used.
+  EMAIL_HEADER_IMAGE_URL: 'https://raw.githubusercontent.com/5leur/stranger-danger/main/docs/email/header.jpg',
 
   ID_PREFIX: 'SD',             // Guest IDs look like SD-7K3MX-Q9P2A
   SHEET_NAME: '',              // blank = the sheet linked to the form
@@ -202,75 +210,182 @@ function processRow_(sheet, row, h, force) {
 
 // ============================== Email ================================
 
+// Poster palette (see the event poster): oxblood background, bone-white type.
+const EMAIL_STYLE = {
+  BG: '#5a1616',
+  BG_DARK: '#3d0e0d',
+  CREAM: '#fff4e2',
+  BONE: '#d9cfc0',
+  WALL: '#c9c6c1',     // mugshot-lineup wall behind the QR
+  INK: '#1b1414',
+  FONT: "'DIN Condensed','Oswald','Bebas Neue','Arial Narrow','Helvetica Neue',Arial,sans-serif",
+  STENCIL: "Impact,'Haettenschweiler','Arial Narrow Bold','DIN Condensed',sans-serif",
+  MONO: "'Courier New',Courier,monospace",
+};
+
 function sendQrEmail_(guest) {
   const qr = qrPng_(guest.id);
-  const firstName = (guest.name || '').split(' ')[0] || 'friend';
-  const paidLine = guest.paid
-    ? '<span style="color:#7CFC9A;font-weight:bold;">PAID ✓</span> — you\'re all set.'
-    : '<span style="color:#FFB347;font-weight:bold;">PAYMENT PENDING</span> — ' + esc_(CONFIG.PAYMENT_INSTRUCTIONS);
-
-  const detailRow = function (label, value) {
-    if (!value) return '';
-    return '<tr><td style="padding:4px 12px 4px 0;color:#b9a7d6;white-space:nowrap;vertical-align:top;">' +
-      label + '</td><td style="padding:4px 0;color:#f3eefc;">' + value + '</td></tr>';
-  };
-
-  const html =
-    '<div style="margin:0;padding:24px 12px;background:#0d0a14;font-family:Georgia,\'Times New Roman\',serif;">' +
-    '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:520px;margin:0 auto;' +
-    'background:#1a1325;border:1px solid #3a2a52;border-radius:14px;">' +
-    '<tr><td style="padding:28px 28px 8px;text-align:center;">' +
-    '<div style="font-size:40px;line-height:1;">🎃🦇👻</div>' +
-    '<h1 style="margin:12px 0 4px;color:#ff7a18;font-size:26px;letter-spacing:1px;">' + esc_(CONFIG.EVENT_NAME) + '</h1>' +
-    '<p style="margin:0;color:#b9a7d6;font-size:14px;">Your ticket to the other side</p>' +
-    '</td></tr>' +
-    '<tr><td style="padding:16px 28px;color:#f3eefc;font-size:16px;line-height:1.5;">' +
-    '<p style="margin:0 0 12px;">Hey ' + esc_(firstName) + ',</p>' +
-    '<p style="margin:0 0 12px;">You\'re on the list. Below is your personal QR code. ' +
-    'Show it to the bouncer at the door. <b>It\'s yours alone, so don\'t share it.</b></p>' +
-    '</td></tr>' +
-    '<tr><td style="padding:4px 28px 8px;text-align:center;">' +
-    '<div style="display:inline-block;background:#ffffff;padding:14px;border-radius:12px;">' +
-    '<img src="cid:qrcode" width="240" height="240" alt="Your entry QR code" style="display:block;">' +
-    '</div>' +
-    '<p style="margin:10px 0 0;color:#b9a7d6;font-family:Menlo,Consolas,monospace;font-size:15px;letter-spacing:2px;">' +
-    esc_(guest.id) + '</p>' +
-    '</td></tr>' +
-    '<tr><td style="padding:16px 28px;font-size:15px;">' +
-    '<table role="presentation" cellpadding="0" cellspacing="0">' +
-    detailRow('Guest', esc_(guest.name)) +
-    detailRow('When', esc_(CONFIG.EVENT_DATE)) +
-    detailRow('Where', esc_(CONFIG.EVENT_VENUE)) +
-    detailRow('Ticket', esc_(CONFIG.TICKET_PRICE)) +
-    detailRow('Payment', paidLine) +
-    detailRow('Dress code', esc_(CONFIG.DRESS_CODE)) +
-    '</table></td></tr>' +
-    '<tr><td style="padding:8px 28px 28px;color:#8f7fab;font-size:13px;line-height:1.5;">' +
-    'Tip: screenshot this QR or keep this email handy. Turn your screen brightness up at the door. ' +
-    'The QR code is also attached as an image.<br><br>' +
-    'See you in the dark,<br>' + esc_(CONFIG.ORGANIZER_NAME) +
-    '</td></tr></table></div>';
-
-  const text =
-    CONFIG.EVENT_NAME + '\n\n' +
-    'Hey ' + firstName + ', you\'re on the list!\n' +
-    'Your Guest ID: ' + guest.id + ' (QR code attached, show it at the door)\n\n' +
-    'When: ' + CONFIG.EVENT_DATE + '\nWhere: ' + CONFIG.EVENT_VENUE + '\n' +
-    (CONFIG.TICKET_PRICE ? 'Ticket: ' + CONFIG.TICKET_PRICE + '\n' : '') +
-    'Payment: ' + (guest.paid ? 'PAID' : 'PENDING. ' + CONFIG.PAYMENT_INSTRUCTIONS) + '\n\n' +
-    CONFIG.ORGANIZER_NAME;
+  const header = headerImage_();
+  const inlineImages = { qrcode: qr };
+  if (header) inlineImages.header = header;
 
   const opts = {
     to: guest.email,
-    subject: '🎃 Your QR ticket: ' + CONFIG.EVENT_NAME,
-    htmlBody: html,
-    body: text,
+    subject: 'WANTED: ' + (guest.name || 'you') + ' at ' + CONFIG.EVENT_NAME + ' ' + CONFIG.EVENT_EDITION +
+      ' (your QR ticket)',
+    htmlBody: buildEmailHtml_(guest, !!header),
+    body: buildEmailText_(guest),
     name: CONFIG.ORGANIZER_NAME,
-    inlineImages: { qrcode: qr },
+    inlineImages: inlineImages,
     attachments: [qr.copyBlob().setName(guest.id + '.png')],
   };
   if (CONFIG.REPLY_TO) opts.replyTo = CONFIG.REPLY_TO;
   MailApp.sendEmail(opts);
+}
+
+/** The poster's header art, cached for 6 hours so bulk sends fetch it once. */
+function headerImage_() {
+  if (!CONFIG.EMAIL_HEADER_IMAGE_URL) return null;
+  const cache = CacheService.getScriptCache();
+  const key = 'hdr:' + CONFIG.EMAIL_HEADER_IMAGE_URL;
+  try {
+    const hit = cache.get(key);
+    if (hit) return Utilities.newBlob(Utilities.base64Decode(hit), 'image/jpeg', 'header.jpg');
+    const res = UrlFetchApp.fetch(CONFIG.EMAIL_HEADER_IMAGE_URL, { muteHttpExceptions: true });
+    if (res.getResponseCode() !== 200) return null;
+    const blob = res.getBlob().setName('header.jpg');
+    const b64 = Utilities.base64Encode(blob.getBytes());
+    if (b64.length < 100000) cache.put(key, b64, 21600);
+    return blob;
+  } catch (err) {
+    return null;
+  }
+}
+
+function buildEmailHtml_(guest, hasHeaderImage) {
+  const S = EMAIL_STYLE;
+  const up = function (s) { return esc_(String(s || '').toUpperCase()); };
+  const txt = function (size, extra) {
+    return 'font-family:' + S.FONT + ';font-weight:700;font-size:' + size + 'px;line-height:1.05;' +
+      'color:' + S.CREAM + ';text-transform:uppercase;' + (extra || '');
+  };
+
+  const header = hasHeaderImage
+    ? '<img src="cid:header" width="520" alt="' + up(CONFIG.EVENT_NAME) + ' ' + up(CONFIG.EVENT_EDITION) +
+      ' – WANTED: DEAD OR ALIVE" style="display:block;width:100%;max-width:520px;height:auto;border:0;">'
+    : '<table role="presentation" cellpadding="0" cellspacing="0" width="100%">' +
+      '<tr><td style="padding:28px 32px 0;' + txt(18) + '">' + up(CONFIG.EVENT_NAME) + '</td>' +
+      '<td align="right" style="padding:28px 32px 0;' + txt(18) + '">' + up(CONFIG.EVENT_EDITION) + '</td></tr>' +
+      '<tr><td colspan="2" align="center" style="padding:14px 24px 0;font-family:' + S.STENCIL + ';font-size:96px;' +
+      'line-height:1;letter-spacing:4px;color:' + S.BONE + ';">WANTED</td></tr>' +
+      '<tr><td colspan="2" align="center" style="padding:6px 24px 4px;' + txt(26, 'letter-spacing:16px;') + '">' +
+      'DEAD OR ALIVE</td></tr></table>';
+
+  const musicLine = CONFIG.MUSIC_BY
+    ? '<br>MUSIC BY <span style="text-decoration:underline;">' + up(CONFIG.MUSIC_BY) + '</span>'
+    : '';
+
+  const price = CONFIG.TICKET_PRICE
+    ? '<table role="presentation" cellpadding="0" cellspacing="0"><tr>' +
+      '<td style="' + txt(56, 'line-height:0.9;letter-spacing:-1px;') + 'padding-right:6px;">' + up(CONFIG.TICKET_PRICE) + '</td>' +
+      '<td style="' + txt(20, 'line-height:0.95;') + 'vertical-align:middle;">' +
+      up(CONFIG.TICKET_PRICE_LABEL).replace(' ', '<br>') + '</td></tr></table>'
+    : '';
+
+  const status = guest.paid
+    ? { label: 'Paid', note: "You're cleared for entry. See you on the other side.", bg: S.CREAM, fg: S.BG }
+    : { label: 'Payment pending', note: CONFIG.PAYMENT_INSTRUCTIONS, bg: 'transparent', fg: S.CREAM };
+
+  return '' +
+    '<style>@media only screen and (max-width:480px){' +
+    '.sd-stack{display:block!important;width:100%!important;text-align:left!important;padding:0 0 14px!important;}' +
+    '.sd-name{font-size:20px!important;}}</style>' +
+    '<div style="margin:0;padding:24px 8px;background:' + S.BG_DARK + ';">' +
+    '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" bgcolor="' + S.BG + '" ' +
+    'style="max-width:520px;margin:0 auto;background:' + S.BG + ';">' +
+
+    // WANTED / DEAD OR ALIVE
+    '<tr><td style="padding:0;">' + header + '</td></tr>' +
+
+    // Mugshot frame with the guest's QR code
+    '<tr><td style="padding:22px 28px 0;">' +
+    '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" bgcolor="' + S.WALL + '" ' +
+    'style="background:' + S.WALL + ';border:3px solid ' + S.CREAM + ';">' +
+    '<tr><td align="center" style="padding:26px 16px 0;">' +
+    '<div style="display:inline-block;background:#ffffff;padding:12px;">' +
+    '<img src="cid:qrcode" width="220" height="220" alt="Your entry QR code" style="display:block;border:0;">' +
+    '</div></td></tr>' +
+    // the placard the suspect holds
+    '<tr><td align="center" style="padding:16px 10px 22px;">' +
+    '<table role="presentation" cellpadding="0" cellspacing="0" bgcolor="' + S.INK + '" style="background:' + S.INK + ';">' +
+    '<tr><td class="sd-name" align="center" style="padding:10px 16px 4px;' + txt(24, 'letter-spacing:1px;word-break:break-word;') + '">' +
+    up(guest.name || 'Unknown suspect') + '</td></tr>' +
+    '<tr><td align="center" style="padding:0 20px 10px;font-family:' + S.MONO + ';font-size:15px;font-weight:700;' +
+    'letter-spacing:2px;color:' + S.BONE + ';">' + esc_(guest.id) + '</td></tr>' +
+    '</table></td></tr></table>' +
+    '</td></tr>' +
+
+    // HALLOWEEN PARTY | FOOD | BOOZE ...
+    '<tr><td style="padding:26px 28px 0;">' +
+    '<table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr>' +
+    '<td class="sd-stack" valign="top" width="30%" style="' + txt(20) + 'padding-right:8px;">' +
+    up(CONFIG.EVENT_TAGLINE).replace(' ', '<br>') + '</td>' +
+    '<td class="sd-stack" valign="top" align="right" style="' + txt(15, 'line-height:1.3;') + '">' +
+    up(CONFIG.EVENT_HIGHLIGHTS) + musicLine + '</td>' +
+    '</tr></table></td></tr>' +
+
+    // divider
+    '<tr><td style="padding:22px 28px 0;"><div style="height:2px;line-height:2px;font-size:0;background:' +
+    S.CREAM + ';">&nbsp;</div></td></tr>' +
+
+    // 1200 DOOR FEE | venue / date / time
+    '<tr><td style="padding:22px 28px 0;">' +
+    '<table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr>' +
+    '<td class="sd-stack" valign="middle" width="46%" style="padding-right:10px;">' + price + '</td>' +
+    '<td class="sd-stack" valign="middle" align="right" style="' + txt(15, 'line-height:1.3;') + '">' +
+    up(CONFIG.EVENT_VENUE) + '<br>' + up(CONFIG.EVENT_DATE) + '<br>' + up(CONFIG.EVENT_TIME) + '</td>' +
+    '</tr></table></td></tr>' +
+
+    // payment status
+    '<tr><td style="padding:26px 28px 0;">' +
+    '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border:2px solid ' + S.CREAM + ';">' +
+    '<tr><td bgcolor="' + (guest.paid ? S.CREAM : S.BG) + '" style="padding:12px 16px;background:' + status.bg + ';">' +
+    '<div style="' + txt(20, 'color:' + status.fg + ';letter-spacing:1px;') + '">' +
+    (guest.paid ? '&#10003; ' : '') + up(status.label) + '</div>' +
+    '<div style="margin-top:4px;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.45;color:' +
+    status.fg + ';">' + esc_(status.note) + '</div>' +
+    '</td></tr></table></td></tr>' +
+
+    // fine print
+    '<tr><td style="padding:22px 28px 30px;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.55;' +
+    'color:' + S.BONE + ';">' +
+    'Show this QR code to the bouncer at the door. It belongs to you alone, so don\'t share it. ' +
+    'Screenshot it or keep this email handy, and turn your brightness up at the door. ' +
+    'The QR is also attached as an image.' +
+    '<div style="margin-top:14px;' + txt(15, 'color:' + S.BONE + ';letter-spacing:1px;') + '">' +
+    up(CONFIG.ORGANIZER_NAME) + '</div>' +
+    '</td></tr>' +
+
+    '</table></div>';
+}
+
+function buildEmailText_(guest) {
+  return [
+    'WANTED: DEAD OR ALIVE',
+    CONFIG.EVENT_NAME + ' ' + CONFIG.EVENT_EDITION + ' / ' + CONFIG.EVENT_TAGLINE,
+    '',
+    (guest.name || 'Guest') + ', you\'re on the list.',
+    'Guest ID: ' + guest.id + ' (QR code attached, show it at the door)',
+    '',
+    CONFIG.EVENT_VENUE,
+    CONFIG.EVENT_DATE + ', ' + CONFIG.EVENT_TIME,
+    CONFIG.TICKET_PRICE ? CONFIG.TICKET_PRICE_LABEL + ': ' + CONFIG.TICKET_PRICE : '',
+    CONFIG.EVENT_HIGHLIGHTS + (CONFIG.MUSIC_BY ? ' | Music by ' + CONFIG.MUSIC_BY : ''),
+    '',
+    'Payment: ' + (guest.paid ? 'PAID' : 'PENDING. ' + CONFIG.PAYMENT_INSTRUCTIONS),
+    '',
+    CONFIG.ORGANIZER_NAME,
+  ].join('\n');
 }
 
 /** PNG of a QR code that encodes the Guest ID. Tries two free renderers. */
