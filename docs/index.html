@@ -3,144 +3,286 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0d0a14">
+<meta name="theme-color" content="#1e0806">
 <meta name="robots" content="noindex">
 <title>Door Scanner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&family=Oswald:wght@600;700&display=swap" rel="stylesheet">
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <style>
+  /* The designs use "Rustic Printed – Stamp" for titles. If you have a web licence for it,
+     drop the file at docs/fonts/RusticPrinted-Stamp.woff2 and it will be used automatically.
+     Otherwise Oswald with a distressed mask stands in. */
+  @font-face {
+    font-family: "Rustic Printed";
+    src: local("Rustic Printed Stamp"), local("RusticPrinted-Stamp"),
+         url("fonts/RusticPrinted-Stamp.woff2") format("woff2");
+    font-display: swap;
+  }
   :root {
-    --bg: #0d0a14; --panel: #1a1325; --line: #3a2a52; --text: #f3eefc; --muted: #b9a7d6;
-    --orange: #ff7a18; --ok: #18a957; --bad: #d62839; --warn: #e89a10; --unknown: #5b5570;
+    --page: #1e0806;
+    --cream: #fdecdd;
+    --frame: #ebe6e4;
+    --frame-idle: #5d4a47;
+    --field: #4a1c1b;
+    --field-line: #b39a92;
+    --muted: #e6d6cc;
+    --settings: #2e0000;
+    --error: #ff7a8a;
+    --paid: #00491e;      --paid-line: #1fa452;
+    --notpaid: #660008;   --notpaid-line: #d4202f;
+    --already: #794c00;   --already-line: #f0a20e;
+    --unknown: #2c2525;   --unknown-line: #8f8580;
+    --title: "Rustic Printed", "Oswald", "Arial Narrow", Impact, sans-serif;
+    --body: "Open Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --grunge: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='130'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' seed='7'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -3.4 0 0 0 2.55'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; }
+  html, body { margin: 0; min-height: 100%; }
   body {
-    background: var(--bg); color: var(--text);
-    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--page);
+    color: var(--cream);
+    font: 15px/1.4 var(--body);
     -webkit-tap-highlight-color: transparent;
   }
-  header {
-    display: flex; align-items: center; justify-content: space-between; gap: 8px;
-    padding: 12px 16px; border-bottom: 1px solid var(--line);
+  body::before {
+    content: ""; position: fixed; inset: 0; z-index: -1;
+    background:
+      linear-gradient(rgba(22, 5, 3, .58), rgba(22, 5, 3, .72)),
+      url("assets/bg.jpg") center / cover no-repeat,
+      var(--page);
   }
-  header h1 { font-size: 18px; margin: 0; color: var(--orange); }
-  .stats { font-size: 13px; color: var(--muted); white-space: nowrap; }
-  main { padding: 16px; max-width: 520px; margin: 0 auto; }
-  button, input {
-    font: inherit; color: inherit; border-radius: 12px; border: 1px solid var(--line);
-    background: var(--panel); padding: 12px 14px;
-  }
-  button { cursor: pointer; font-weight: 600; }
-  button.primary { background: var(--orange); border-color: var(--orange); color: #1b0d00; }
-  button.big { width: 100%; padding: 18px; font-size: 20px; }
-  button.ghost { background: transparent; }
-  button:disabled { opacity: .5; }
-  input { width: 100%; }
-  label { display: block; font-size: 14px; color: var(--muted); margin: 14px 0 6px; }
-  .icon-btn { padding: 8px 10px; font-size: 18px; line-height: 1; }
+  button, input { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  button:disabled { opacity: .55; cursor: default; }
 
-  #reader { width: 100%; border-radius: 16px; overflow: hidden; background: #000; min-height: 260px; }
-  #reader video { object-fit: cover; }
-  .hint { text-align: center; color: var(--muted); margin: 12px 0; font-size: 14px; }
-  .manual { display: flex; gap: 8px; margin-top: 8px; }
-  .manual input { text-transform: uppercase; letter-spacing: 1px; }
-  .err { color: #ff8a95; font-size: 14px; min-height: 1.4em; margin-top: 8px; }
+  .app {
+    max-width: 460px; margin: 0 auto;
+    padding: max(14px, env(safe-area-inset-top)) 14px max(20px, env(safe-area-inset-bottom));
+    min-height: 100dvh; display: flex; flex-direction: column;
+  }
 
-  /* Result overlay */
-  #result {
-    position: fixed; inset: 0; display: none; flex-direction: column;
-    padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
-    overflow-y: auto;
+  /* Distressed stamp titles */
+  .stamp {
+    font-family: var(--title); font-weight: 700; text-transform: uppercase;
+    letter-spacing: .04em; line-height: .95; margin: 0;
+    -webkit-mask-image: var(--grunge); mask-image: var(--grunge);
+    -webkit-mask-size: 260px 130px; mask-size: 260px 130px;
   }
-  #result.show { display: flex; }
-  #result.ok { background: var(--ok); }
-  #result.bad { background: var(--bad); }
-  #result.warn { background: var(--warn); color: #1d1300; }
-  #result.unknown, #result.loading { background: var(--unknown); }
-  .verdict { text-align: center; margin-top: 4vh; }
-  .verdict .emoji { font-size: 64px; line-height: 1; }
-  .verdict h2 { font-size: clamp(32px, 11vw, 56px); margin: 8px 0 0; letter-spacing: 1px; line-height: 1.05; }
-  .verdict .sub { font-size: 18px; margin-top: 6px; opacity: .92; }
-  .card {
-    background: rgba(0,0,0,.22); border-radius: 16px; padding: 16px; margin: 24px auto 0;
-    width: 100%; max-width: 520px; color: #fff;
-  }
-  #result.warn .card { color: #1d1300; background: rgba(255,255,255,.35); }
-  .card .name { font-size: 26px; font-weight: 700; word-break: break-word; }
-  .card .id { font-family: ui-monospace, Menlo, Consolas, monospace; opacity: .85; margin-top: 2px; }
-  .card dl { margin: 12px 0 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; font-size: 15px; }
-  .card dt { opacity: .8; }
-  .card dd { margin: 0; word-break: break-word; }
-  .actions { margin: 24px auto 0; width: 100%; max-width: 520px; display: grid; gap: 10px; }
-  .actions button { border: 0; }
-  .actions .admit { background: #fff; color: #0b3d22; }
-  .actions .collect { background: #fff; color: #7a0f1b; }
-  .actions .next { background: rgba(0,0,0,.28); color: #fff; }
-  #result.warn .actions .next { color: #1d1300; background: rgba(255,255,255,.4); }
 
-  /* Settings dialog */
-  dialog {
-    background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 16px;
-    width: min(480px, calc(100vw - 32px)); padding: 20px;
+  header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 12px; }
+  .logo .name { font-size: 27px; color: var(--cream); }
+  .logo .year { font-size: 17px; color: var(--cream); margin-top: 2px; }
+  .gear {
+    width: 46px; height: 46px; display: grid; place-items: center;
+    background: rgba(20, 4, 3, .55); border: 2px solid var(--cream); border-radius: 9px; padding: 0;
   }
-  dialog::backdrop { background: rgba(0,0,0,.7); }
-  dialog h3 { margin: 0 0 4px; color: var(--orange); }
-  dialog p { margin: 0; color: var(--muted); font-size: 14px; }
-  .row { display: flex; gap: 8px; margin-top: 18px; justify-content: flex-end; flex-wrap: wrap; }
-  .status { font-size: 14px; margin-top: 10px; min-height: 1.4em; }
+  .gear svg { width: 26px; height: 26px; fill: var(--cream); }
+
+  /* Camera frame */
+  .frame {
+    position: relative; border-radius: 26px; padding: 5px;
+    background: var(--frame); transition: background .2s;
+    height: min(62dvh, 128vw, 560px);
+  }
+  .frame.idle { background: var(--frame-idle); }
+  .frame.checking { background: linear-gradient(160deg, #e3262e 0%, #b51920 45%, #ff9aa0 100%); }
+  .frame.capture { height: min(76dvh, 150vw, 680px); }
+  .viewport {
+    position: relative; width: 100%; height: 100%; border-radius: 21px; overflow: hidden; background: #0c0303;
+  }
+  /* The scanner library measures its own video element, so it keeps its natural size and is
+     scaled to fill the frame with a transform (see fitReader) rather than CSS sizing. */
+  #reader { position: absolute; left: 50%; top: 50%; width: 100%; border: 0 !important; transform: translate(-50%, -50%); }
+  #captureVideo, #captureStill { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  #reader > div { display: none !important; } /* the library's "Scanner paused" label; the frame colour shows state */
+  #reader img[alt="Info icon"], #reader #qr-shaded-region { display: none !important; }
+  .brackets { position: absolute; inset: 25% 19% 21%; pointer-events: none; }
+  .brackets i { position: absolute; width: 36px; height: 36px; border: 0 solid rgba(255, 255, 255, .9); }
+  .brackets i:nth-child(1) { top: 0; left: 0; border-top-width: 4px; border-left-width: 4px; }
+  .brackets i:nth-child(2) { top: 0; right: 0; border-top-width: 4px; border-right-width: 4px; }
+  .brackets i:nth-child(3) { bottom: 0; left: 0; border-bottom-width: 4px; border-left-width: 4px; }
+  .brackets i:nth-child(4) { bottom: 0; right: 0; border-bottom-width: 4px; border-right-width: 4px; }
+  .checking-label {
+    position: absolute; top: 26px; left: 0; right: 0; text-align: center;
+    font-size: clamp(26px, 9.6vw, 46px); color: #f6e9e2; display: none; white-space: nowrap;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, .55);
+  }
+  .frame.checking .checking-label { display: block; }
+  .cam-msg {
+    position: absolute; inset: 0; display: none; place-items: center; text-align: center;
+    padding: 24px; color: var(--muted); font-size: 14px;
+  }
+  .cam-msg.show { display: grid; }
+
+  /* Capture mode */
+  #captureVideo, #captureStill { display: none; }
+  .capture #reader, .capture .brackets { display: none; }
+  .capture #captureVideo.on, .capture #captureStill.on { display: block; }
+  .shutter {
+    position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%);
+    width: 78px; height: 78px; border-radius: 50%; padding: 6px; border: 0; display: none;
+    background: conic-gradient(from 200deg, #c13584, #833ab4, #5851db, #c13584);
+  }
+  .shutter::after { content: ""; display: block; width: 100%; height: 100%; border-radius: 50%; background: #fff; }
+  .capture-actions {
+    position: absolute; left: 14px; right: 14px; bottom: 18px; display: none; gap: 10px;
+  }
+  .capture-actions button { flex: 1; height: 50px; border-radius: 6px; font-weight: 700; }
+  .capture.live .shutter { display: block; }
+  .capture.still .capture-actions { display: flex; }
+
+  .hint { text-align: center; color: var(--muted); margin: 12px 0 0; font-size: 15px; }
+  .capture-cancel {
+    display: none; margin: 8px auto 0; background: none; border: 0; color: var(--muted);
+    text-decoration: underline; font-size: 14px;
+  }
+  .manual-label { margin: 20px 0 6px; font-size: 15px; }
+  .manual { display: flex; gap: 8px; }
+  .manual input {
+    flex: 1; min-width: 0; height: 46px; padding: 0 12px; border-radius: 8px;
+    background: var(--field); border: 1.5px solid var(--field-line);
+    text-transform: uppercase; letter-spacing: 1px;
+  }
+  .manual input::placeholder { color: rgba(253, 236, 221, .35); }
+  .manual button {
+    width: 78px; height: 46px; border-radius: 8px; border: 0; font-weight: 700;
+    background: var(--cream); color: #3a0a08;
+  }
+  .walkin {
+    width: 100%; height: 54px; margin-top: 12px; border-radius: 8px; font-weight: 700;
+    background: #2a0c0a; border: 2px solid var(--cream); color: var(--cream);
+  }
+  .scan-only.hide { display: none; }
+
+  /* Modals */
+  .backdrop {
+    position: fixed; inset: 0; z-index: 20; display: none; overflow-y: auto;
+    background: rgba(12, 2, 1, .62); padding: 0 14px;
+  }
+  .backdrop.show { display: block; }
+  .modal {
+    max-width: 432px; margin: max(118px, calc(env(safe-area-inset-top) + 104px)) auto 24px;
+    border-radius: 18px; border: 4px solid; padding: 30px 22px 22px;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, .55);
+  }
+  .modal.paid    { background: var(--paid);    border-color: var(--paid-line); }
+  .modal.notpaid { background: var(--notpaid); border-color: var(--notpaid-line); }
+  .modal.already { background: var(--already); border-color: var(--already-line); }
+  .modal.unknown { background: var(--unknown); border-color: var(--unknown-line); }
+  .modal .stamp { text-align: center; font-size: clamp(38px, 12vw, 50px); color: #fff4ec; }
+  .modal .sub { text-align: center; margin: 8px 0 0; font-size: 15px; color: #fff; }
+  .modal .who { margin-top: 32px; }
+  .modal .who .n { font-size: 24px; font-weight: 700; line-height: 1.2; word-break: break-word; color: #fff; }
+  .modal .who .i { font-size: 17px; color: #fff; }
+  .modal dl {
+    display: grid; grid-template-columns: minmax(110px, 40%) 1fr; gap: 9px 12px; margin: 24px 0 0;
+    font-size: 15px; color: #fff;
+  }
+  .modal dd { margin: 0; word-break: break-word; }
+  .modal dd a { color: #fff; }
+  .modal .actions { display: grid; gap: 10px; margin-top: 40px; }
+  .modal .actions button {
+    height: 50px; border-radius: 6px; font-weight: 700; font-size: 15px;
+    border: 2px solid #fff; background: transparent; color: #fff;
+  }
+  .modal .actions button.primary { background: #fff; }
+  .modal.paid .primary    { color: var(--paid); }
+  .modal.notpaid .primary { color: var(--notpaid); }
+  .modal.already .primary { color: var(--already); }
+  .modal.unknown .primary { color: var(--unknown); }
+
+  .settings {
+    max-width: 432px; margin: max(200px, 28dvh) auto 24px;
+    background: var(--settings); border: 2px solid var(--cream); border-radius: 16px; padding: 22px 18px 18px;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, .6);
+  }
+  .settings h2 { margin: 0; font-size: 18px; font-weight: 700; }
+  .settings p { margin: 6px 0 0; font-size: 13px; }
+  .settings label { display: block; margin: 16px 0 6px; font-size: 13px; }
+  .settings input {
+    width: 100%; height: 42px; padding: 0 8px; border-radius: 6px;
+    background: var(--settings); border: 1.5px solid var(--cream); font-size: 16px;
+  }
+  .settings .row { display: flex; align-items: center; gap: 8px; margin-top: 22px; }
+  .settings .err { flex: 1; color: var(--error); font-size: 14px; line-height: 1.3; }
+  .settings .row button { height: 42px; padding: 0 16px; border-radius: 6px; font-weight: 700; }
+  .settings .cancel { background: transparent; border: 1.5px solid var(--cream); }
+  .settings .save { background: var(--cream); color: #2e0000; border: 0; min-width: 80px; }
+
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 </style>
 </head>
 <body>
-<header>
-  <h1>🎃 Door Scanner</h1>
-  <div style="display:flex;align-items:center;gap:10px;">
-    <span class="stats" id="stats"></span>
-    <button class="icon-btn ghost" id="openSettings" aria-label="Settings">⚙️</button>
+<div class="app">
+  <header>
+    <div class="logo">
+      <div class="stamp name">Stranger Danger</div>
+      <div class="stamp year">Year 2</div>
+    </div>
+    <button class="gear" id="openSettings" aria-label="Scanner settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6a.5.5 0 0 0 .1-.6l-2-3.5a.5.5 0 0 0-.6-.2l-2.5 1a7.4 7.4 0 0 0-1.7-1l-.4-2.6a.5.5 0 0 0-.5-.4h-4a.5.5 0 0 0-.5.4l-.4 2.6a7.4 7.4 0 0 0-1.7 1l-2.5-1a.5.5 0 0 0-.6.2l-2 3.5a.5.5 0 0 0 .1.6L4.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6a.5.5 0 0 0-.1.6l2 3.5c.1.2.4.3.6.2l2.5-1c.5.4 1.1.7 1.7 1l.4 2.6c0 .3.3.4.5.4h4c.2 0 .5-.1.5-.4l.4-2.6c.6-.3 1.2-.6 1.7-1l2.5 1c.2.1.5 0 .6-.2l2-3.5a.5.5 0 0 0-.1-.6L19.4 13zM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"/></svg>
+    </button>
+  </header>
+
+  <div class="frame idle" id="frame">
+    <div class="viewport" id="viewport">
+      <div id="reader"></div>
+      <video id="captureVideo" playsinline muted></video>
+      <img id="captureStill" alt="Captured proof of payment">
+      <div class="brackets" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+      <div class="stamp checking-label" id="checkingLabel">Checking QR code</div>
+      <div class="cam-msg" id="camMsg"></div>
+      <button class="shutter" id="shutter" aria-label="Take photo"></button>
+      <div class="capture-actions">
+        <button id="retake" style="background:transparent;border:2px solid #fff;color:#fff;">Retake Photo</button>
+        <button id="savePhoto" style="background:#fff;border:0;color:#1b0b09;">Save Photo</button>
+      </div>
+    </div>
   </div>
-</header>
+  <p class="hint" id="hint">Point the camera at the guest's QR code.</p>
+  <button class="capture-cancel" id="captureCancel">Cancel</button>
+  <input type="file" accept="image/*" capture="environment" id="filePick" class="sr-only" tabindex="-1">
 
-<main>
-  <div id="reader"></div>
-  <p class="hint" id="hint">Point the camera at the guest's QR code</p>
-  <button class="big primary" id="startBtn" style="display:none">Start camera</button>
-
-  <label for="manualId">Can't scan? Type the Guest ID</label>
-  <form class="manual" id="manualForm">
-    <input id="manualId" placeholder="SD-XXXXX-XXXXX" autocomplete="off" autocapitalize="characters" spellcheck="false">
-    <button class="primary" type="submit">Check</button>
-  </form>
-  <div class="err" id="err"></div>
-</main>
-
-<section id="result" aria-live="assertive">
-  <div class="verdict">
-    <div class="emoji" id="rEmoji"></div>
-    <h2 id="rTitle"></h2>
-    <div class="sub" id="rSub"></div>
+  <div class="scan-only" id="scanOnly">
+    <label class="manual-label" for="manualId" style="display:block">Can't scan? Type the Guest ID</label>
+    <form class="manual" id="manualForm">
+      <input id="manualId" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Guest ID">
+      <button type="submit">Check</button>
+    </form>
+    <button class="walkin" id="walkIn">Walk-In Registration</button>
   </div>
-  <div class="card" id="rCard">
-    <div class="name" id="rName"></div>
-    <div class="id" id="rId"></div>
-    <dl id="rDetails"></dl>
-  </div>
-  <div class="actions" id="rActions"></div>
-</section>
+</div>
 
-<dialog id="settings">
-  <form method="dialog" id="settingsForm">
-    <h3>Scanner settings</h3>
+<div class="backdrop" id="resultBackdrop" role="dialog" aria-modal="true" aria-live="assertive">
+  <div class="modal" id="modal">
+    <h2 class="stamp" id="mTitle"></h2>
+    <p class="sub" id="mSub"></p>
+    <div class="who" id="mWho">
+      <div class="n" id="mName"></div>
+      <div class="i" id="mId"></div>
+    </div>
+    <dl id="mDetails"></dl>
+    <div class="actions" id="mActions"></div>
+  </div>
+</div>
+
+<div class="backdrop" id="settingsBackdrop" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+  <form class="settings" id="settingsForm" novalidate>
+    <h2 id="settingsTitle">Scanner settings</h2>
     <p>Get these from the party organizer. They're saved on this device only.</p>
     <label for="apiUrl">Web app URL</label>
-    <input id="apiUrl" type="url" placeholder="https://script.google.com/macros/s/…/exec" required>
-    <label for="pin">Bouncer PIN</label>
-    <input id="pin" type="password" autocomplete="off" required>
-    <div class="status" id="settingsStatus"></div>
+    <input id="apiUrl" type="url" autocomplete="off" spellcheck="false">
+    <label for="pin">Doorman PIN</label>
+    <input id="pin" type="password" autocomplete="off">
     <div class="row">
-      <button type="button" class="ghost" id="cancelSettings">Cancel</button>
-      <button type="submit" class="primary" id="saveSettings" value="save">Save &amp; test</button>
+      <div class="err" id="settingsErr"></div>
+      <button type="button" class="cancel" id="cancelSettings">Cancel</button>
+      <button type="submit" class="save" id="saveSettings">Save</button>
     </div>
   </form>
-</dialog>
+</div>
 
 <script>
 (function () {
@@ -151,10 +293,9 @@
   function load() {
     try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}; } catch (e) { return {}; }
   }
-  function save(cfg) {
-    try { localStorage.setItem(LS_KEY, JSON.stringify(cfg)); } catch (e) { /* private mode */ }
+  function save(c) {
+    try { localStorage.setItem(LS_KEY, JSON.stringify(c)); } catch (e) { /* private mode */ }
   }
-
   var cfg = load();
 
   // Organizers can share a one-tap setup link: …/#api=<url>&pin=<pin>
@@ -166,45 +307,36 @@
     history.replaceState(null, '', location.pathname + location.search);
   }
 
-  // ---------- API ----------
+  // ---------------- API ----------------
   var ERRORS = {
-    bad_pin: 'Wrong PIN. Check the settings (⚙️).',
+    bad_pin: 'Wrong PIN. Check the scanner settings.',
     pin_not_set: 'The organizer has not set a PIN yet (🎃 Party → Run setup).',
     too_many_attempts: 'Too many wrong PINs. Wait 10 minutes.',
-    unknown_action: 'Scanner and script versions do not match.'
+    unknown_action: 'The scanner and the Apps Script versions do not match. Redeploy the web app.',
+    no_photo: 'The photo did not come through. Please retake it.',
+    photo_too_large: 'That photo is too large. Please retake it.'
   };
+  function ApiError(code, msg) { this.code = code; this.message = msg; }
 
-  function api(params) {
-    if (!cfg.api || !cfg.pin) return Promise.reject(new Error('Open settings (⚙️) and enter the web app URL and PIN.'));
-    var qs = new URLSearchParams(Object.assign({ pin: cfg.pin }, params));
-    return fetch(cfg.api + (cfg.api.indexOf('?') === -1 ? '?' : '&') + qs.toString(), { redirect: 'follow' })
-      .then(function (r) {
-        if (!r.ok) throw new Error('Server error ' + r.status);
-        return r.json();
-      })
+  function call(params, post) {
+    if (!cfg.api || !cfg.pin) return Promise.reject(new ApiError('setup', 'Open the scanner settings and enter the web app URL and PIN.'));
+    var body = Object.assign({ pin: cfg.pin }, params);
+    var req = post
+      ? fetch(cfg.api, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body) })
+      : fetch(cfg.api + (cfg.api.indexOf('?') === -1 ? '?' : '&') + new URLSearchParams(body).toString());
+    return req
+      .then(function (r) { if (!r.ok) throw new ApiError('http', 'Server error ' + r.status + '.'); return r.json(); })
       .catch(function (e) {
-        if (e instanceof SyntaxError || e.name === 'TypeError') {
-          throw new Error('Could not reach the server. Check the internet connection and the web app URL.');
-        }
-        throw e;
+        if (e instanceof ApiError) throw e;
+        throw new ApiError('network', 'Could not reach the web app. Check the internet connection and the web app URL.');
       })
       .then(function (res) {
-        if (!res.ok && ERRORS[res.error]) throw new Error(ERRORS[res.error]);
+        if (!res.ok && ERRORS[res.error]) throw new ApiError(res.error, ERRORS[res.error]);
         return res;
       });
   }
 
-  function refreshStats() {
-    if (!cfg.api || !cfg.pin) return;
-    api({ action: 'stats' }).then(function (res) {
-      if (res.ok) showStats(res.stats);
-    }).catch(function () {});
-  }
-  function showStats(s) {
-    if (s) $('stats').textContent = s.checkedIn + ' in · ' + s.paid + ' paid · ' + s.registered + ' reg';
-  }
-
-  // ---------- Feedback ----------
+  // ---------------- Feedback ----------------
   var audioCtx;
   function beep(kind) {
     try {
@@ -213,214 +345,389 @@
       tones.forEach(function (f, i) {
         var o = audioCtx.createOscillator(), g = audioCtx.createGain();
         o.frequency.value = f; o.type = kind === 'ok' ? 'sine' : 'square';
-        g.gain.value = 0.08;
-        o.connect(g); g.connect(audioCtx.destination);
-        var t = audioCtx.currentTime + i * 0.16;
-        o.start(t); o.stop(t + 0.13);
+        g.gain.value = 0.08; o.connect(g); g.connect(audioCtx.destination);
+        var t = audioCtx.currentTime + i * 0.16; o.start(t); o.stop(t + 0.13);
       });
     } catch (e) { /* no audio */ }
     if (navigator.vibrate) navigator.vibrate(kind === 'ok' ? 80 : [200, 80, 200]);
   }
 
-  // ---------- Scanner ----------
-  var scanner = null, busy = false;
+  // ---------------- Frame state ----------------
+  var frame = $('frame');
+  function frameState(s) {
+    frame.classList.remove('idle', 'checking');
+    if (s) frame.classList.add(s);
+  }
+  function camMsg(text) {
+    $('camMsg').textContent = text || '';
+    $('camMsg').classList.toggle('show', !!text);
+  }
+
+  // ---------------- QR scanner ----------------
+  var scanner = null, busy = false, scanning = false;
+  var lastCode = '', ignoreUntil = 0; // don't re-read the code that was just handled
 
   function startScanner() {
-    $('startBtn').style.display = 'none';
-    $('hint').textContent = 'Starting camera…';
-    if (!window.Html5Qrcode) {
-      $('hint').textContent = 'Scanner library failed to load. Check the internet connection and reload.';
-      return;
-    }
+    if (!window.Html5Qrcode) { camMsg('Scanner failed to load. Check the internet connection and reload.'); return Promise.resolve(); }
     scanner = scanner || new Html5Qrcode('reader', { formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE], verbose: false });
-    scanner.start(
-      { facingMode: 'environment' },
-      { fps: 12, qrbox: function (w, h) { var s = Math.floor(Math.min(w, h) * 0.75); return { width: s, height: s }; } },
-      onScan,
-      function () {}
-    ).then(function () {
-      $('hint').textContent = "Point the camera at the guest's QR code";
-    }).catch(function (e) {
-      $('hint').textContent = 'Camera unavailable: ' + (e && e.message || e) + '. Allow camera access, or type the ID below.';
-      $('startBtn').style.display = 'block';
-    });
+    camMsg('Starting camera…');
+    return scanner.start({ facingMode: 'environment' }, { fps: 12 }, onScan, function () {})
+      .then(function () { scanning = true; camMsg(''); fitReader(); })
+      .catch(function (e) {
+        camMsg('Camera unavailable (' + (e && e.message || e) + '). Allow camera access and reload, or type the Guest ID below.');
+      });
   }
+  function fitReader() {
+    var r = $('reader'), vp = $('viewport');
+    if (!r.offsetHeight || !r.offsetWidth) return;
+    var s = Math.max(vp.clientWidth / r.offsetWidth, vp.clientHeight / r.offsetHeight);
+    r.style.transform = 'translate(-50%, -50%) scale(' + s + ')';
+  }
+  window.addEventListener('resize', fitReader);
+  if (window.ResizeObserver) new ResizeObserver(fitReader).observe($('reader'));
 
+  function stopScanner() {
+    if (!scanner || !scanning) return Promise.resolve();
+    scanning = false;
+    return scanner.stop().catch(function () {});
+  }
   function pauseScanner() {
-    try { if (scanner && scanner.getState() === Html5QrcodeScannerState.SCANNING) scanner.pause(true); } catch (e) {}
+    try { if (scanning && scanner.getState() === Html5QrcodeScannerState.SCANNING) scanner.pause(true); } catch (e) {}
   }
   function resumeScanner() {
-    try { if (scanner && scanner.getState() === Html5QrcodeScannerState.PAUSED) scanner.resume(); } catch (e) {}
+    try { if (scanning && scanner.getState() === Html5QrcodeScannerState.PAUSED) scanner.resume(); } catch (e) {}
   }
-
   function onScan(text) {
-    if (busy) return;
+    if (busy || (text === lastCode && Date.now() < ignoreUntil)) return;
+    if (!cfg.api || !cfg.pin || $('settingsBackdrop').classList.contains('show')) return;
     lookup(text);
   }
 
-  // ---------- Result screen ----------
-  function el(tag, text, cls) {
-    var e = document.createElement(tag);
-    if (text != null) e.textContent = text;
-    if (cls) e.className = cls;
-    return e;
-  }
+  // ---------------- Modals ----------------
+  function el(tag, text) { var e = document.createElement(tag); if (text != null) e.textContent = text; return e; }
+  function money(n) { return (current && current.currency || 'Php') + ' ' + Number(n || 0).toLocaleString('en-US'); }
 
-  function showResult(state, opts) {
-    var r = $('result');
-    r.className = 'show ' + state;
-    $('rEmoji').textContent = opts.emoji || '';
-    $('rTitle').textContent = opts.title || '';
-    $('rSub').textContent = opts.sub || '';
+  var current = null; // guest currently on screen
 
-    var g = opts.guest;
-    $('rCard').style.display = g ? '' : 'none';
-    var dl = $('rDetails');
-    dl.textContent = '';
+  function showModal(kind, o) {
+    $('modal').className = 'modal ' + kind;
+    $('mTitle').textContent = o.title;
+    var sub = $('mSub'); sub.textContent = '';
+    (o.sub || []).forEach(function (part) {
+      sub.appendChild(typeof part === 'string' ? document.createTextNode(part) : part);
+    });
+    var g = o.guest;
+    $('mWho').style.display = g ? '' : 'none';
+    var dl = $('mDetails'); dl.textContent = ''; dl.style.display = g ? '' : 'none';
     if (g) {
-      $('rName').textContent = g.name || '(no name)';
-      $('rId').textContent = g.id;
+      $('mName').textContent = g.name || '(no name)';
+      $('mId').textContent = g.id;
       var rows = [];
-      if (g.email) rows.push({ label: 'Email', value: g.email });
-      if (g.checkedInAt) rows.push({ label: 'Checked in', value: g.checkedInAt });
-      if (g.notes) rows.push({ label: 'Notes', value: g.notes });
-      rows.concat(g.details || []).forEach(function (d) {
-        dl.appendChild(el('dt', d.label));
-        dl.appendChild(el('dd', d.value));
+      if (g.email) rows.push(['Email', g.email]);
+      (g.details || []).forEach(function (d) { rows.push([d.label, d.value]); });
+      rows.push(['Amount Paid', g.amountPaid > 0 ? Number(g.amountPaid).toLocaleString('en-US') : 'None']);
+      rows.push(['Proof of Payment', g.proofs || []]);
+      rows.forEach(function (r) {
+        dl.appendChild(el('dt', r[0]));
+        var dd = el('dd');
+        if (Array.isArray(r[1])) {
+          if (!r[1].length) { var none = el('u', 'None'); dd.appendChild(none); }
+          r[1].forEach(function (url, i) {
+            if (i) dd.appendChild(el('br'));
+            var a = el('a', url); a.href = url; a.target = '_blank'; a.rel = 'noopener'; dd.appendChild(a);
+          });
+        } else {
+          dd.textContent = r[1];
+        }
+        dl.appendChild(dd);
       });
     }
-
-    var actions = $('rActions');
-    actions.textContent = '';
-    (opts.actions || []).forEach(function (a) {
-      var b = el('button', a.label, 'big ' + a.cls);
+    var actions = $('mActions'); actions.textContent = '';
+    (o.actions || []).forEach(function (a) {
+      var b = el('button', a.label);
+      if (a.primary) b.className = 'primary';
       b.addEventListener('click', function () {
         if (a.busyLabel) { b.disabled = true; b.textContent = a.busyLabel; }
-        a.onClick();
+        a.onClick(b);
       });
       actions.appendChild(b);
     });
-    var next = el('button', opts.nextLabel || 'Next guest', 'big next');
-    next.addEventListener('click', closeResult);
-    actions.appendChild(next);
+    $('resultBackdrop').classList.add('show');
+    $('resultBackdrop').scrollTop = 0;
+    frameState('idle');
   }
 
-  function closeResult() {
-    $('result').className = '';
-    busy = false;
+  function closeModal() {
+    $('resultBackdrop').classList.remove('show');
+    current = null; busy = false;
+    ignoreUntil = Date.now() + 3000;
     $('manualId').value = '';
+    frameState(null);
     resumeScanner();
   }
 
-  function renderGuest(res, id) {
-    var g = res.guest;
-    if (!res.ok && res.error === 'not_found') {
-      beep('bad');
-      return showResult('unknown', {
-        emoji: '❓', title: 'UNKNOWN CODE',
-        sub: 'This QR is not on the guest list. Do not admit.'
-      });
-    }
-    if (!res.ok && !g) throw new Error(res.error || 'Unexpected response');
-
+  function showGuest(g, opts) {
+    current = g;
+    opts = opts || {};
     if (g.checkedIn) {
       beep('warn');
-      return showResult('warn', {
-        emoji: '⚠️', title: res.admitted ? 'ADMITTED' : 'ALREADY IN',
-        sub: res.admitted ? 'Checked in just now.' : 'This code was already used at ' + g.checkedInAt + '. Possible duplicate.',
-        guest: g
+      return showModal('already', {
+        title: 'Already in', sub: ['This code was checked in on ', el('br'), g.checkedInAt + '.'], guest: g,
+        actions: [{ label: 'Next Guest', onClick: closeModal }]
       });
     }
     if (g.paid) {
       beep('ok');
-      return showResult('ok', {
-        emoji: '✅', title: 'PAID', sub: 'Good to go.', guest: g,
-        nextLabel: 'Cancel',
-        actions: [{ label: 'Admit & check in', cls: 'admit', busyLabel: 'Checking in…', onClick: function () { admit(id, false); } }]
+      return showModal('paid', {
+        title: 'Paid', sub: [opts.collected ? 'Payment recorded. Good to go.' : 'Good to go.'], guest: g,
+        actions: [
+          { label: 'Admit & Check-In', primary: true, busyLabel: 'Checking in…', onClick: function () { admit(g.id); } },
+          { label: 'Cancel', onClick: closeModal }
+        ]
       });
     }
     beep('bad');
-    return showResult('bad', {
-      emoji: '⛔', title: 'NOT PAID', sub: 'Collect payment before letting them in.', guest: g,
-      nextLabel: 'Deny / next guest',
-      actions: [{ label: 'Payment collected → admit', cls: 'collect', busyLabel: 'Saving…', onClick: function () { admit(id, true); } }]
+    var sub;
+    if (g.amountPaid > 0) {
+      var b = el('b', money(g.balance));
+      sub = ['Collect the rest of the payment: ', b, ' before letting them in.'];
+    } else if (g.status === 'Rejected') {
+      sub = ['Their online payment was rejected. Collect payment before letting them in.'];
+    } else if (g.status === 'For Approval' && (g.proofs || []).length) {
+      sub = ['Their online payment is still for approval. Collect payment before letting them in.'];
+    } else {
+      sub = ['Collect payment before letting them in.'];
+    }
+    showModal('notpaid', {
+      title: 'Not paid', sub: sub, guest: g,
+      actions: [
+        { label: 'Collect Proof of Payment', primary: true, onClick: function () { openCapture(g); } },
+        { label: 'Cancel', onClick: closeModal }
+      ]
     });
   }
 
-  function showError(msg) {
+  function showError(msg, code) {
     beep('bad');
-    showResult('unknown', { emoji: '📡', title: 'ERROR', sub: msg, nextLabel: 'Back' });
+    var actions = [{ label: 'Back', onClick: closeModal }];
+    if (code === 'bad_pin' || code === 'setup' || code === 'network') {
+      actions.unshift({ label: 'Open Settings', primary: true, onClick: function () { closeModal(); openSettings(); } });
+    }
+    showModal('unknown', { title: 'Error', sub: [msg], actions: actions });
   }
 
+  // ---------------- Lookup / admit ----------------
   function lookup(raw) {
     var id = String(raw || '').trim();
-    if (!id) return;
+    if (!id || busy) return;
     busy = true;
+    lastCode = id;
     pauseScanner();
-    $('err').textContent = '';
-    showResult('loading', { emoji: '🔍', title: 'Checking…', sub: id, nextLabel: 'Cancel' });
-    api({ action: 'lookup', id: id })
-      .then(function (res) { renderGuest(res, id); })
-      .catch(function (e) { showError(e.message); });
+    frameState('checking');
+    call({ action: 'lookup', id: id })
+      .then(function (res) {
+        if (!res.ok && res.error === 'not_found') {
+          beep('bad');
+          return showModal('unknown', {
+            title: 'Unknown code', sub: ['This QR is not on the guest list. Do not admit.'],
+            actions: [{ label: 'Next Guest', onClick: closeModal }]
+          });
+        }
+        if (!res.ok) throw new ApiError(res.error, res.error);
+        showGuest(res.guest);
+      })
+      .catch(function (e) { showError(e.message, e.code); });
   }
 
-  function admit(id, collect) {
-    api({ action: 'admit', id: id, collect: collect ? '1' : '0' })
+  function admit(id) {
+    call({ action: 'admit', id: id })
       .then(function (res) {
         if (res.ok && res.admitted) {
           beep('ok');
-          showResult('ok', {
-            emoji: '🎉', title: 'WELCOME IN', sub: collect ? 'Payment recorded and checked in.' : 'Checked in.',
-            guest: res.guest
+          showModal('paid', {
+            title: 'Checked in', sub: ['Welcome to the party.'], guest: res.guest,
+            actions: [{ label: 'Next Guest', primary: true, onClick: closeModal }]
           });
-          refreshStats();
-          setTimeout(function () { if ($('result').classList.contains('ok')) closeResult(); }, 2500);
+          setTimeout(function () { if ($('modal').classList.contains('paid') && current === res.guest) closeModal(); }, 2500);
+          current = res.guest;
+        } else if (res.guest) {
+          showGuest(res.guest);
         } else {
-          renderGuest(res, id);
+          throw new ApiError(res.error, res.error);
         }
       })
-      .catch(function (e) { showError(e.message); });
+      .catch(function (e) { showError(e.message, e.code); });
   }
 
-  // ---------- Settings ----------
+  // ---------------- Proof-of-payment capture ----------------
+  var capStream = null, capGuest = null, capData = null;
+
+  function setMode(mode) {
+    // mode: 'scan' | 'live' | 'still'
+    var cap = mode !== 'scan';
+    frame.classList.toggle('capture', cap);
+    $('viewport').classList.toggle('capture', cap);
+    $('viewport').classList.toggle('live', mode === 'live');
+    $('viewport').classList.toggle('still', mode === 'still');
+    $('captureVideo').classList.toggle('on', mode === 'live');
+    $('captureStill').classList.toggle('on', mode === 'still');
+    $('scanOnly').classList.toggle('hide', cap);
+    $('captureCancel').style.display = cap ? 'block' : 'none';
+    $('hint').textContent = cap ? 'Collect proof of payment.' : "Point the camera at the guest's QR code.";
+  }
+
+  function openCapture(g) {
+    capGuest = g;
+    $('resultBackdrop').classList.remove('show');
+    frameState(null);
+    setMode('live');
+    camMsg('Starting camera…');
+    stopScanner().then(function () {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('no camera API');
+      return navigator.mediaDevices.getUserMedia({
+        audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+      });
+    }).then(function (stream) {
+      capStream = stream;
+      var v = $('captureVideo'); v.srcObject = stream;
+      return v.play();
+    }).then(function () {
+      camMsg('');
+    }).catch(function () {
+      // Fall back to the phone's own camera app.
+      camMsg('Tap the button below to take the photo.');
+      $('shutter').onclick = function () { $('filePick').click(); };
+    });
+  }
+
+  function stopCaptureStream() {
+    if (capStream) capStream.getTracks().forEach(function (t) { t.stop(); });
+    capStream = null;
+    $('captureVideo').srcObject = null;
+  }
+
+  function toJpeg(source, w, h) {
+    var max = 1600, scale = Math.min(1, max / Math.max(w, h));
+    var c = document.createElement('canvas');
+    c.width = Math.round(w * scale); c.height = Math.round(h * scale);
+    c.getContext('2d').drawImage(source, 0, 0, c.width, c.height);
+    return c.toDataURL('image/jpeg', 0.78);
+  }
+
+  function showStill(dataUrl) {
+    capData = dataUrl;
+    $('captureStill').src = dataUrl;
+    setMode('still');
+    camMsg('');
+  }
+
+  $('shutter').addEventListener('click', function () {
+    var v = $('captureVideo');
+    if (!capStream || !v.videoWidth) return;
+    showStill(toJpeg(v, v.videoWidth, v.videoHeight));
+  });
+
+  $('filePick').addEventListener('change', function () {
+    var file = this.files && this.files[0];
+    this.value = '';
+    if (!file) return;
+    var img = new Image();
+    img.onload = function () { showStill(toJpeg(img, img.naturalWidth, img.naturalHeight)); URL.revokeObjectURL(img.src); };
+    img.src = URL.createObjectURL(file);
+  });
+
+  $('retake').addEventListener('click', function () {
+    capData = null;
+    setMode('live');
+    if (!capStream) { camMsg('Tap the button below to take the photo.'); $('filePick').click(); }
+  });
+
+  $('savePhoto').addEventListener('click', function () {
+    var btn = this;
+    btn.disabled = true; btn.textContent = 'Saving…';
+    $('retake').disabled = true;
+    frameState('checking');
+    $('checkingLabel').textContent = 'Saving proof';
+    call({ action: 'collect', id: capGuest.id, photo: capData }, true)
+      .then(function (res) {
+        if (!res.ok) throw new ApiError(res.error, res.error === 'not_found' ? 'This guest is no longer on the list.' : res.error);
+        leaveCapture();
+        showGuest(res.guest, { collected: true });
+      })
+      .catch(function (e) {
+        frameState(null);
+        alert('Could not save the photo: ' + e.message);
+      })
+      .then(function () {
+        btn.disabled = false; btn.textContent = 'Save Photo';
+        $('retake').disabled = false;
+        $('checkingLabel').textContent = 'Checking QR code';
+      });
+  });
+
+  function leaveCapture() {
+    stopCaptureStream();
+    capData = null;
+    $('shutter').onclick = null;
+    setMode('scan');
+    return startScanner(); // scans are ignored while busy, so no need to pause it
+  }
+
+  $('captureCancel').addEventListener('click', function () {
+    leaveCapture().then(closeModal);
+  });
+
+  // ---------------- Settings ----------------
   function openSettings() {
     $('apiUrl').value = cfg.api || '';
     $('pin').value = cfg.pin || '';
-    $('settingsStatus').textContent = '';
-    $('settings').showModal();
+    $('settingsErr').textContent = '';
+    $('settingsBackdrop').classList.add('show');
+    frameState('idle');
+  }
+  function closeSettings() {
+    $('settingsBackdrop').classList.remove('show');
+    if (!$('resultBackdrop').classList.contains('show')) frameState(null);
   }
   $('openSettings').addEventListener('click', openSettings);
-  $('cancelSettings').addEventListener('click', function () { $('settings').close(); });
+  $('cancelSettings').addEventListener('click', closeSettings);
   $('settingsForm').addEventListener('submit', function (ev) {
     ev.preventDefault();
-    var next = { api: $('apiUrl').value.trim(), pin: $('pin').value };
     var prev = cfg;
-    cfg = next;
-    $('settingsStatus').textContent = 'Testing…';
-    $('saveSettings').disabled = true;
-    api({ action: 'ping' }).then(function (res) {
-      if (!res.ok) throw new Error(res.error || 'Unexpected response');
+    cfg = Object.assign({}, cfg, { api: $('apiUrl').value.trim(), pin: $('pin').value });
+    $('settingsErr').textContent = '';
+    $('saveSettings').disabled = true; $('saveSettings').textContent = '…';
+    call({ action: 'ping' }).then(function (res) {
+      if (!res.ok) throw new ApiError(res.error, '');
+      cfg.formUrl = res.formUrl || '';
       save(cfg);
-      showStats(res.stats);
-      $('settingsStatus').textContent = '';
-      $('settings').close();
+      closeSettings();
     }).catch(function (e) {
       cfg = prev;
-      $('settingsStatus').textContent = '❌ ' + e.message;
-    }).then(function () { $('saveSettings').disabled = false; });
+      $('settingsErr').innerHTML = e.code === 'too_many_attempts'
+        ? 'Too many wrong PINs.<br>Wait 10 minutes.'
+        : 'Information not correct.<br>Please try again.';
+    }).then(function () { $('saveSettings').disabled = false; $('saveSettings').textContent = 'Save'; });
   });
 
+  // ---------------- Manual entry / walk-in ----------------
   $('manualForm').addEventListener('submit', function (ev) {
     ev.preventDefault();
     $('manualId').blur();
     lookup($('manualId').value);
   });
-  $('startBtn').addEventListener('click', startScanner);
+  $('walkIn').addEventListener('click', function () {
+    if (cfg.formUrl) { window.open(cfg.formUrl, '_blank', 'noopener'); return; }
+    showError('No registration form link yet. Ask the organizer to set REGISTRATION_FORM_URL, then re-save the scanner settings.');
+  });
 
-  // ---------- Boot ----------
-  if (!cfg.api || !cfg.pin) openSettings(); else refreshStats();
-  setInterval(refreshStats, 60000);
-  startScanner();
+  // ---------------- Boot ----------------
+  setMode('scan');
+  startScanner().then(function () {
+    if (!cfg.api || !cfg.pin) { openSettings(); return; }
+    frameState(null);
+    if (!cfg.formUrl) call({ action: 'ping' }).then(function (res) { if (res.ok) { cfg.formUrl = res.formUrl || ''; save(cfg); } }).catch(function () {});
+  });
 })();
 </script>
 </body>
