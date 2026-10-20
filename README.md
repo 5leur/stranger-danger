@@ -109,7 +109,7 @@ https://<your-scanner-page>/#api=<WEB_APP_URL>&pin=<PIN>
 | Task | How |
 |---|---|
 | Approve a payment | Set **Payment Status** to *Approved*. Enter **Amount Paid** first if it isn't the default. The QR ticket is emailed within seconds, and a note pops up in the sheet |
-| Second installment arrives | Raise **Amount Paid** (e.g. 600 → 1200). The guest gets an updated "Paid in full" ticket |
+| Installment guest pays the rest before the party | Any of these: select the row → **🎃 Party → Mark selected row(s) as paid in full**; raise **Amount Paid** to 1200; or change **Payment Type** to *Full Payment*. The guest gets the same *Payment confirmed – Paid in full* email full payers get, with their QR code resent (same code), and no balance reminder |
 | Reject a payment | Set **Payment Status** to *Rejected*. No email is sent, so contact the guest yourself |
 | Walk-in mode | Automatic during `WALK_IN_START`–`WALK_IN_END`. **🎃 Party → Walk-in mode** switches between automatic / on / off, and shows which one is active. Keep the form closed to the public during the party, or a guest registering from home would also be auto-approved |
 | Installment reminders | They go out automatically on `EVENT_DATE_ISO − REMINDER_DAYS_BEFORE`, around 9 AM. **🎃 Party → Turn automatic installment reminders on/off** switches that; **Send installment reminders now** sends them immediately. Nobody gets two reminders |
