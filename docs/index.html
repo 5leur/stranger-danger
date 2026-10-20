@@ -225,6 +225,8 @@
   }
   .settings .row { display: flex; align-items: center; gap: 8px; margin-top: 22px; }
   .settings .err { flex: 1; color: var(--error); font-size: 14px; line-height: 1.3; }
+  .settings .reason { margin: 10px 0 0; color: var(--muted); font-size: 12.5px; line-height: 1.4; }
+  .settings .reason:empty { display: none; }
   .settings .row button { height: 42px; padding: 0 16px; border-radius: 6px; font-weight: 700; }
   .settings .cancel { background: transparent; border: 1.5px solid var(--cream); }
   .settings .save { background: var(--cream); color: #2e0000; border: 0; min-width: 80px; }
@@ -299,6 +301,7 @@
       <button type="button" class="cancel" id="cancelSettings">Cancel</button>
       <button type="submit" class="save" id="saveSettings">Save</button>
     </div>
+    <p class="reason" id="settingsReason" aria-live="polite"></p>
   </form>
 </div>
 
@@ -343,10 +346,22 @@
       ? fetch(cfg.api, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body) })
       : fetch(cfg.api + (cfg.api.indexOf('?') === -1 ? '?' : '&') + new URLSearchParams(body).toString());
     return req
-      .then(function (r) { if (!r.ok) throw new ApiError('http', 'Server error ' + r.status + '.'); return r.json(); })
+      .then(function (r) {
+        if (!r.ok) throw new ApiError('http', 'The web app answered with an error (HTTP ' + r.status + ').');
+        return r.text();
+      })
+      .then(function (text) {
+        try { return JSON.parse(text); } catch (e) {
+          // Usually a Google sign-in / "authorization required" page instead of the API.
+          throw new ApiError('not_json', 'The URL answered with a web page, not the scanner API. Make sure it is the ' +
+            'Web app URL ending in /exec, and that the deployment is set to "Who has access: Anyone" ' +
+            '(not "Anyone with Google account") and has been authorized.');
+        }
+      })
       .catch(function (e) {
         if (e instanceof ApiError) throw e;
-        throw new ApiError('network', 'Could not reach the web app. Check the internet connection and the web app URL.');
+        throw new ApiError('network', 'Could not reach the web app. Check the internet connection, that the URL ' +
+          'is right, and that no content blocker on this phone is blocking script.google.com.');
       })
       .then(function (res) {
         if (!res.ok && ERRORS[res.error]) throw new ApiError(res.error, ERRORS[res.error]);
@@ -709,6 +724,7 @@
     $('apiUrl').value = cfg.api || '';
     $('pin').value = cfg.pin || '';
     $('settingsErr').textContent = '';
+    $('settingsReason').textContent = '';
     $('settingsBackdrop').classList.add('show');
     frameState('idle');
   }
@@ -716,24 +732,48 @@
     $('settingsBackdrop').classList.remove('show');
     if (!$('resultBackdrop').classList.contains('show')) frameState(null);
   }
+  // The headline follows the design; the smaller line underneath says what actually went wrong.
+  var SETTINGS_REASONS = {
+    bad_pin: 'Wrong PIN for this web app. Use the PIN set in this spreadsheet (🎃 Party → Change bouncer PIN).',
+    pin_not_set: 'This web app has no PIN yet. Run 🎃 Party → Run setup in its spreadsheet.',
+    too_many_attempts: 'Too many wrong PINs. Wait 10 minutes, then try again.'
+  };
+  function showSettingsError(e, url) {
+    var reason = SETTINGS_REASONS[e.code] || e.message || String(e.code || e);
+    if (/\/dev(\?|$)/.test(url || '')) {
+      reason = 'That is the test (/dev) URL. Use the Web app URL ending in /exec from Deploy → Manage deployments.';
+    } else if (url && !/^https:\/\/script\.google\.com\/(a\/macros\/[^/]+|macros)\/s\/[^/]+\/exec/.test(url) &&
+               (e.code === 'not_json' || e.code === 'network' || e.code === 'http')) {
+      reason = 'This does not look like an Apps Script Web app URL. It should look like ' +
+        'https://script.google.com/macros/s/…/exec (from Deploy → Manage deployments).';
+    }
+    var box = $('settingsErr');
+    box.textContent = '';
+    box.appendChild(document.createTextNode('Information not correct.'));
+    box.appendChild(document.createElement('br'));
+    box.appendChild(document.createTextNode('Please try again.'));
+    $('settingsReason').textContent = reason;
+  }
+
   $('openSettings').addEventListener('click', openSettings);
   $('cancelSettings').addEventListener('click', closeSettings);
   $('settingsForm').addEventListener('submit', function (ev) {
     ev.preventDefault();
     var prev = cfg;
-    cfg = Object.assign({}, cfg, { api: $('apiUrl').value.trim(), pin: $('pin').value });
+    // The PIN is trimmed when it's set in the sheet, so ignore stray spaces from phone keyboards.
+    cfg = Object.assign({}, cfg, { api: $('apiUrl').value.trim(), pin: $('pin').value.trim() });
     $('settingsErr').textContent = '';
+    $('settingsReason').textContent = '';
     $('saveSettings').disabled = true; $('saveSettings').textContent = '…';
     call({ action: 'ping' }).then(function (res) {
-      if (!res.ok) throw new ApiError(res.error, '');
+      if (!res.ok) throw new ApiError(res.error, 'The web app said: ' + res.error);
       cfg.formUrl = res.formUrl || '';
       save(cfg);
       closeSettings();
     }).catch(function (e) {
+      var tried = cfg;
       cfg = prev;
-      $('settingsErr').innerHTML = e.code === 'too_many_attempts'
-        ? 'Too many wrong PINs.<br>Wait 10 minutes.'
-        : 'Information not correct.<br>Please try again.';
+      showSettingsError(e, tried.api);
     }).then(function () { $('saveSettings').disabled = false; $('saveSettings').textContent = 'Save'; });
   });
 
