@@ -87,7 +87,25 @@
     height: min(62dvh, 128vw, 560px);
   }
   .frame.idle { background: var(--frame-idle); }
-  .frame.checking { background: linear-gradient(160deg, #e3262e 0%, #b51920 45%, #ff9aa0 100%); }
+  /* Checking: a red gradient sweeps clockwise around the frame. A large square layer
+     with a conic gradient spins behind the viewport; the 5px padding shows it as the border. */
+  .frame { overflow: hidden; isolation: isolate; }
+  .frame::before {
+    content: ""; position: absolute; left: 50%; top: 50%; z-index: -1;
+    width: 200vmax; height: 200vmax; margin: -100vmax 0 0 -100vmax;
+    background: conic-gradient(from 0deg,
+      #4d0a0d 0deg, #4d0a0d 150deg, #8e1118 220deg, #e3262e 300deg, #ff9aa0 345deg, #4d0a0d 360deg);
+    opacity: 0; transition: opacity .2s;
+  }
+  .frame.checking { background: #4d0a0d; }
+  .frame.checking::before { opacity: 1; animation: frame-spin 1.1s linear infinite; }
+  .frame.checking .checking-label { animation: label-pulse 1.1s ease-in-out infinite; }
+  @keyframes frame-spin { to { transform: rotate(360deg); } }
+  @keyframes label-pulse { 50% { opacity: .55; } }
+  @media (prefers-reduced-motion: reduce) {
+    .frame.checking::before { animation-duration: 3s; }
+    .frame.checking .checking-label { animation: none; }
+  }
   .frame.capture { height: min(76dvh, 150vw, 680px); }
   .viewport {
     position: relative; width: 100%; height: 100%; border-radius: 21px; overflow: hidden; background: #0c0303;

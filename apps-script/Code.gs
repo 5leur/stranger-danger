@@ -177,7 +177,8 @@ function changePin() {
 }
 
 function sendPendingRegistrations() {
-  forEachRow_('registration email(s)', function (sheet, row, h) { return processNewRow_(sheet, row, h); });
+  forEachRow_('registration email(s)', function (sheet, row, h) { return processNewRow_(sheet, row, h); },
+    'already received theirs earlier');
 }
 
 /**
@@ -217,15 +218,20 @@ function prepareExistingRows() {
 }
 
 function sendPendingTickets() {
-  forEachRow_('QR ticket(s)', function (sheet, row, h) { return syncTicket_(sheet, row, h, false); });
+  forEachRow_('QR ticket(s)', function (sheet, row, h) { return syncTicket_(sheet, row, h, false); },
+    'already had theirs (sent automatically when they were approved)');
 }
 
-function forEachRow_(what, fn) {
+/**
+ * Runs fn on every guest row and reports what happened. fn returns 'sent', 'already'
+ * (the guest got this email before) or 'skipped' (nothing to send for this row).
+ */
+function forEachRow_(what, fn, alreadyText) {
   const ui = SpreadsheetApp.getUi();
   const sheet = getSheet_();
   ensureColumns_(sheet);
   const h = headerMap_(sheet);
-  let sent = 0, skipped = 0;
+  let sent = 0, skipped = 0, already = 0;
   const errors = [];
   for (let row = 2; row <= sheet.getLastRow(); row++) {
     if (MailApp.getRemainingDailyQuota() < 1) {
@@ -233,12 +239,17 @@ function forEachRow_(what, fn) {
       break;
     }
     try {
-      fn(sheet, row, h) === 'sent' ? sent++ : skipped++;
+      const result = fn(sheet, row, h);
+      if (result === 'sent') sent++;
+      else if (result === 'already') already++;
+      else skipped++;
     } catch (err) {
       errors.push('Row ' + row + ': ' + err.message);
     }
   }
-  ui.alert('Sent ' + sent + ' ' + what + ', skipped ' + skipped + '.' +
+  ui.alert('Sent ' + sent + ' ' + what + ' now.' +
+    (already ? '\n' + already + ' guest(s) ' + alreadyText + '.' : '') +
+    (skipped ? '\n' + skipped + ' row(s) skipped (not approved yet, or nothing to send).' : '') +
     (errors.length ? '\n\nProblems:\n' + errors.join('\n') : ''));
 }
 
@@ -439,7 +450,7 @@ function processNewRow_(sheet, row, h) {
     sheet.getRange(row, h[COL.STATUS]).setValue(STATUS.PENDING);
     g.status = STATUS.PENDING;
   }
-  if (found.rec[COL.REG_EMAILED]) return 'skipped';
+  if (found.rec[COL.REG_EMAILED]) return found.rec[COL.REG_EMAILED] instanceof Date ? 'already' : 'skipped';
   if (g.status === STATUS.APPROVED) {
     sheet.getRange(row, h[COL.REG_EMAILED]).setValue('Skipped (already approved)');
     return 'skipped';
@@ -503,7 +514,7 @@ function syncTicket_(sheet, row, h, force) {
     return syncTicket_(sheet, row, h, force);
   }
   const confirmed = parseAmount_(found.rec[COL.CONFIRMED]);
-  if (!force && g.amountPaid <= confirmed) return 'skipped';
+  if (!force && g.amountPaid <= confirmed) return 'already';
   if (g.amountPaid <= 0) return 'skipped';
   if (!g.email) throw new Error('no email address in this row');
 
