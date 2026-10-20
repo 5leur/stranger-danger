@@ -97,6 +97,7 @@ function onOpen() {
     .createMenu('🎃 Party')
     .addItem('Run setup', 'setup')
     .addSeparator()
+    .addItem('Prepare existing registrants (no emails)', 'prepareExistingRows')
     .addItem('Send registration emails to rows not yet emailed', 'sendPendingRegistrations')
     .addItem('Send QR tickets to approved guests not yet emailed', 'sendPendingTickets')
     .addItem('Resend QR ticket to selected row(s)', 'resendSelected')
@@ -167,6 +168,42 @@ function changePin() {
 
 function sendPendingRegistrations() {
   forEachRow_('registration email(s)', function (sheet, row, h) { return processNewRow_(sheet, row, h); });
+}
+
+/**
+ * For a list that was collected before this script was set up: gives every row a
+ * Guest ID and a Payment Status dropdown WITHOUT sending registration emails, and
+ * marks them so "Send registration emails…" will skip them later. Approving a row
+ * afterwards sends the QR ticket as usual.
+ */
+function prepareExistingRows() {
+  const ui = SpreadsheetApp.getUi();
+  const ok = ui.alert('Prepare existing registrants?',
+    'Every row without a Guest ID gets one, plus a Payment Status dropdown. ' +
+    'No emails are sent, and these rows will never get the "Registration received" email.\n\n' +
+    'Afterwards, set Payment Status to "' + STATUS.APPROVED + '" for the guests who have paid. Each one is ' +
+    'emailed their QR ticket. Or set them all, then use "Send QR tickets to approved guests not yet emailed".',
+    ui.ButtonSet.YES_NO);
+  if (ok !== ui.Button.YES) return;
+  const sheet = getSheet_();
+  ensureColumns_(sheet);
+  const h = headerMap_(sheet);
+  let prepared = 0;
+  withLock_(function () {
+    for (let row = 2; row <= sheet.getLastRow(); row++) {
+      const found = readRow_(sheet, row, h);
+      const g = found.guest;
+      if (!g.email && !g.name) continue;
+      if (!g.id) sheet.getRange(row, h[COL.ID]).setValue(newGuestId_(sheet, h));
+      formatRow_(sheet, row, h, found.rec);
+      if (!found.rec[COL.STATUS]) sheet.getRange(row, h[COL.STATUS]).setValue(STATUS.PENDING);
+      if (!found.rec[COL.REG_EMAILED]) {
+        sheet.getRange(row, h[COL.REG_EMAILED]).setValue('Skipped (existing registrant)');
+        prepared++;
+      }
+    }
+  });
+  ui.alert('Prepared ' + prepared + ' existing registrant(s). No emails were sent.');
 }
 
 function sendPendingTickets() {
@@ -436,7 +473,13 @@ function processWalkIn_(sheet, row, h) {
 function syncTicket_(sheet, row, h, force) {
   const found = readRow_(sheet, row, h);
   const g = found.guest;
-  if (!g.id || g.status !== STATUS.APPROVED) return 'skipped';
+  if (g.status !== STATUS.APPROVED || (!g.email && !g.name)) return 'skipped';
+  if (!g.id) {
+    // Existing registrant approved before getting a registration email: give them an ID now.
+    sheet.getRange(row, h[COL.ID]).setValue(newGuestId_(sheet, h));
+    formatRow_(sheet, row, h, found.rec);
+    return syncTicket_(sheet, row, h, force);
+  }
 
   if (found.rec[COL.AMOUNT] === '' || found.rec[COL.AMOUNT] == null) {
     const assumed = g.installment ? Math.min(CONFIG.INSTALLMENT_FIRST_PAYMENT, g.price) : g.price;
