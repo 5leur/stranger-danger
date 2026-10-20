@@ -100,6 +100,7 @@ function onOpen() {
     .addItem('Send registration emails to rows not yet emailed', 'sendPendingRegistrations')
     .addItem('Send QR tickets to approved guests not yet emailed', 'sendPendingTickets')
     .addItem('Resend QR ticket to selected row(s)', 'resendSelected')
+    .addItem('Mark selected row(s) as paid in full', 'markSelectedPaidInFull')
     .addSeparator()
     .addItem('Send installment reminders now', 'sendRemindersNow')
     .addItem('Turn automatic installment reminders on/off', 'toggleAutoReminders')
@@ -223,6 +224,51 @@ function resendSelected() {
   ui.alert('Sent ' + sent + ' QR ticket(s).' + (errors.length ? '\n\nProblems:\n' + errors.join('\n') : ''));
 }
 
+/**
+ * For installment guests who settle the balance before the party: approves the row,
+ * sets Amount Paid to the full price and emails the "Paid in full" QR ticket.
+ */
+function markSelectedPaidInFull() {
+  const ui = SpreadsheetApp.getUi();
+  const sheet = getSheet_();
+  const range = sheet.getActiveRange();
+  if (!range || SpreadsheetApp.getActiveSheet().getName() !== sheet.getName()) {
+    ui.alert('Select one or more guest rows on the "' + sheet.getName() + '" sheet first.');
+    return;
+  }
+  const first = Math.max(2, range.getRow());
+  const last = range.getLastRow();
+  if (last < first) return;
+  const ok = ui.alert('Mark ' + (last - first + 1) + ' guest(s) as paid in full (' + money_(CONFIG.TICKET_PRICE) + ')?\n' +
+    'Each one is approved and emailed the "Paid in full" confirmation with their QR code.', ui.ButtonSet.YES_NO);
+  if (ok !== ui.Button.YES) return;
+
+  ensureColumns_(sheet);
+  const h = headerMap_(sheet);
+  const errors = [];
+  let sent = 0;
+  withLock_(function () {
+    for (let row = first; row <= last; row++) {
+      try {
+        if (markPaidInFull_(sheet, row, h) === 'sent') sent++;
+      } catch (err) {
+        errors.push('Row ' + row + ': ' + err.message);
+      }
+    }
+  });
+  ui.alert('Sent ' + sent + ' "Paid in full" confirmation(s).' +
+    (errors.length ? '\n\nProblems:\n' + errors.join('\n') : ''));
+}
+
+function markPaidInFull_(sheet, row, h) {
+  const found = readRow_(sheet, row, h);
+  if (!found.guest.id) return 'skipped';
+  const price = found.guest.price;
+  if (parseAmount_(found.rec[COL.AMOUNT]) < price) sheet.getRange(row, h[COL.AMOUNT]).setValue(price);
+  if (found.guest.status !== STATUS.APPROVED) sheet.getRange(row, h[COL.STATUS]).setValue(STATUS.APPROVED);
+  return syncTicket_(sheet, row, h, false);
+}
+
 function sendRemindersNow() {
   const ui = SpreadsheetApp.getUi();
   const due = reminderCandidates_();
@@ -291,13 +337,25 @@ function onSheetEdit(e) {
   if (sheet.getSheetId() !== getSheet_().getSheetId()) return;
   const h = headerMap_(sheet);
   const c1 = e.range.getColumn(), c2 = e.range.getLastColumn();
-  const touches = [h[COL.STATUS], h[COL.AMOUNT]].some(function (c) { return c && c >= c1 && c <= c2; });
-  if (!touches) return;
+  const typeCol = h[detectPaymentTypeHeader_(h)];
+  const inRange = function (c) { return c && c >= c1 && c <= c2; };
+  const typeEdited = inRange(typeCol);
+  if (!inRange(h[COL.STATUS]) && !inRange(h[COL.AMOUNT]) && !typeEdited) return;
 
   const problems = [];
   withLock_(function () {
     for (let row = Math.max(2, e.range.getRow()); row <= e.range.getLastRow(); row++) {
       try {
+        // Switching an approved installment guest's Payment Type to a full payment
+        // means they've settled the balance: treat it as paid in full.
+        if (typeEdited) {
+          const found = readRow_(sheet, row, h);
+          if (found.guest.status === STATUS.APPROVED && !found.guest.installment &&
+              parseAmount_(found.rec[COL.AMOUNT]) < found.guest.price &&
+              /full/i.test(String(found.rec[detectPaymentTypeHeader_(h)] || ''))) {
+            sheet.getRange(row, h[COL.AMOUNT]).setValue(found.guest.price);
+          }
+        }
         if (syncTicket_(sheet, row, h, false) === 'sent') {
           toast_('QR ticket emailed for row ' + row + '.');
         }
@@ -473,7 +531,7 @@ function sendEmail_(kind, guest) {
   const event = CONFIG.EVENT_NAME + ' ' + CONFIG.EVENT_EDITION;
   const subject = {
     registration: 'Registration received: ' + event + ' (payment for approval)',
-    ticket: 'Payment confirmed: your QR ticket to ' + event,
+    ticket: (guest.balance > 0 ? 'Installment approved' : 'Payment confirmed') + ': your QR ticket to ' + event,
     walkin: 'Walk-in confirmed: your QR ticket to ' + event,
     reminder: 'Reminder: ' + money_(guest.balance) + ' balance for ' + event,
   }[kind];
@@ -548,14 +606,23 @@ function emailCopy_(kind, g) {
     };
   }
   // ticket
+  if (g.balance > 0) {
+    return {
+      heading: 'Installment approved',
+      intro: 'Hi ' + first + ', your installment payment of ' + money_(g.amountPaid) + ' has been approved. ' +
+        'This is your QR ticket, but you will only be let in once your ticket is paid in full.',
+      status: { label: 'Partially paid · balance ' + balance,
+        note: money_(g.amountPaid) + ' of ' + money_(g.price) + ' received. Pay the remaining ' + balance +
+          ' in person at the door (cash or digital banking). The doorman will record it, then let you in.',
+        filled: false },
+      fine: 'Your QR code belongs to you alone, so don\'t share it. Screenshot it or keep this email handy, ' +
+        'and turn your brightness up at the door. The QR is also attached as an image.',
+    };
+  }
   return {
     heading: 'Payment confirmed',
     intro: 'You\'re on the list, ' + first + '. This is your QR ticket. Show it to the bouncer at the door.',
-    status: g.balance > 0
-      ? { label: 'Partially paid · balance ' + balance,
-          note: money_(g.amountPaid) + ' of ' + money_(g.price) + ' received. ' +
-            'Settle the remaining ' + balance + ' before the party or at the door.', filled: false }
-      : { label: '✓ Paid in full', note: 'You\'re cleared for entry. See you on the other side.', filled: true },
+    status: { label: '✓ Paid in full', note: 'You\'re cleared for entry. See you on the other side.', filled: true },
     fine: 'Your QR code belongs to you alone, so don\'t share it. Screenshot it or keep this email handy, ' +
       'and turn your brightness up at the door. The QR is also attached as an image.',
   };
