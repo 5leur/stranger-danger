@@ -22,10 +22,10 @@ Google Form ──► Google Sheet ──► Apps Script ──► 📧 1. "Regi
 3. **The day before the party,** every installment guest who still owes money gets a **balance reminder**. This runs automatically, and you can switch it off or send the reminders yourself from the menu.
 4. **At the door** the doorman scans the QR code, and a popup shows the result:
    - **PAID** (green): *Admit & Check-In*.
-   - **NOT PAID** (red): no payment yet, or *collect the rest: Php 600* for installment guests. *Collect Proof of Payment* opens the camera. The doorman photographs the receipt, cash or transfer screen, then taps *Save Photo*. The photo is added to the guest's own form submission (their *Proof of Payment* cell, saved in the same Drive folder as the form's uploads), the guest is marked paid in full, and the popup turns green so the doorman can check them in.
+   - **NOT PAID** (red): no payment yet, or *collect the rest: Php 600* for installment guests. *Collect Proof of Payment* opens the camera. The doorman photographs the receipt, cash or transfer screen, then taps *Save Photo*. The guest is marked paid in full and the photo is **emailed to the organizers** (`ORGANIZER_EMAIL`) with the guest's name, ID and the amount collected, and the popup turns green so the doorman can check them in.
    - **ALREADY IN** (amber): the code was already used, with the time of first check-in.
    - **UNKNOWN CODE**: not on the guest list.
-5. **Walk-ins:** *Walk-In Registration* opens the Google Form, and the guest fills it in on the spot (full payment with proof, checked by the doorman in person). During the party the script is in **walk-in mode**: new submissions are approved automatically, skip the "For Approval" email, are checked in, and the guest gets a *Walk-in confirmed* email with their QR code. Walk-in mode follows `WALK_IN_START`–`WALK_IN_END` (Oct 31, 6 PM to Nov 1, 6 AM by default). You can also force it on or off from **🎃 Party → Walk-in mode**.
+5. **Walk-ins:** *Walk-In Registration* opens the Google Form, and the guest fills it in on the spot (full payment with proof, checked by the doorman in person). During the party the script is in **walk-in mode**: new submissions are approved automatically, skip the "For Approval" email, are checked in, and the guest gets a *Walk-in confirmed* email with their QR code. Walk-in mode follows `WALK_IN_START`–`WALK_IN_END` (Oct 31, 6 PM to Nov 1, 6 AM by default). Tapping *Walk-In Registration* on the scanner also switches walk-in mode on for 30 minutes (`WALK_IN_TAP_MINUTES`), so a walk-in's entry is recorded even outside that window. You can also force it on or off from **🎃 Party → Walk-in mode**.
 
 | Path | What it is |
 |---|---|
@@ -44,7 +44,6 @@ Google Form ──► Google Sheet ──► Apps Script ──► 📧 1. "Regi
 | `Confirmed Amount` | script | The amount the last QR ticket email covered. The script uses it to avoid emailing twice |
 | `Registration Emailed At`, `QR Emailed At`, `Reminder Sent At` | script | When each email went out |
 | `Checked In At` | script | Set when the doorman checks the guest in |
-| `Door Payment Proof` | script | Only added if the form has no proof-of-payment upload. Otherwise door photos go into the form's own *Proof of Payment* column |
 | `Door Notes` | script | e.g. "Collected Php 600 at door Oct 31, 9:41 PM" |
 
 ---
@@ -53,7 +52,7 @@ Google Form ──► Google Sheet ──► Apps Script ──► 📧 1. "Regi
 
 ### 1. Google Form
 The form needs:
-- **Name:** *Full name*, or *First name* + *Last name*.
+- **Name:** *Full name*, or *First name* + *Last name*. If there's a **First Name** question, guest emails greet people by it ("Hi Corrine"); the doorman sees the full name.
 - **Email:** a question, or turn on *Settings → Responses → Collect email addresses*.
 - **Payment type:** a question whose title contains "Payment Type" or "Payment Option", with choices such as *Full Payment* and *Installment*. Any answer containing "install", "partial" or "down payment" counts as an installment.
 - **Proof of payment (recommended):** a *File upload* question titled e.g. "Proof of Payment". Its Drive link shows up in the doorman's popup.
@@ -76,7 +75,8 @@ In the **Responses** tab, click **Link to Sheets**.
    - installs three triggers: on form submit (registration email), on edit (QR ticket on approval), and daily (installment reminders),
    - asks for the **doorman PIN** (6+ characters).
 
-   The permissions include **Gmail** (sending), **Drive** (saving door photos into one folder) and **Forms** (finding the form link for walk-ins).
+   The permissions include **Gmail** (sending) and **Forms** (finding the form link for walk-ins). Google Drive isn't needed.
+   - Set `ORGANIZER_EMAIL` to the address (or comma-separated addresses) that should receive proof-of-payment photos taken at the door. Setup shows where they'll go.
 
 People who registered **before** setup, if you **don't** want them to get the "Registration received" email:
 1. **🎃 Party → Prepare existing registrants (no emails)**. Every row gets a Guest ID and a Payment Status dropdown, and is marked so it never gets the registration email.
@@ -127,5 +127,6 @@ The fonts in the designs are Open Sans plus *Rustic Printed – Stamp* for the t
 ## Good to know
 - **Email quota:** a regular Gmail account can send about **100 emails/day** (1,500 with Google Workspace). Each guest now gets 2–3 emails. If you hit the limit, the menu actions pick up where they stopped the next day.
 - **QR images** are made by quickchart.io, with api.qrserver.com as a fallback. Only the Guest ID is sent to them.
-- **Door photos** are saved next to the form's own proof-of-payment uploads in Drive and linked in the guest's *Proof of Payment* cell. The proof links in the popup open for people with access to that Drive.
+- **Payment types:** only **installments** can be partly paid. Any other approved payment type counts as paid in full, whatever the *Amount Paid* cell says. That includes **group payments** (e.g. Php 5000 for 5 people, where one member's row shows 5000 and the others show 0 or blank): every approved group member is fully paid, gets the normal "Paid in full" ticket, and shows **PAID** at the door. Their *Amount Paid* cells are left as they are.
+- **Door photos** are emailed to `ORGANIZER_EMAIL` (subject *"Door payment: name (ID) – Php …"*) and count toward the daily email limit. If the email can't be sent, the payment is still recorded, the doorman sees a warning, and *Door Notes* says the photo wasn't emailed.
 - Payment and check-in status are always read live from the sheet, so a payment approved the night before shows **PAID** at the door.

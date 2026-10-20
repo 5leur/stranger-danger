@@ -14,7 +14,8 @@
  *      away: the doorman has checked the payment in person, so the guest gets
  *      a walk-in QR confirmation instead of the "For Approval" email.
  *   5. Exposes a PIN-protected JSON API for the bouncer's scanner page
- *      (docs/index.html): look up, collect proof of payment, check in.
+ *      (docs/index.html): look up, collect proof of payment (the photo is
+ *      emailed to the organizers), check in.
  *
  * See README.md for setup steps.
  */
@@ -44,6 +45,9 @@ const CONFIG = {
 
   ORGANIZER_NAME: 'The Stranger Danger Crew',
   REPLY_TO: '',                // optional reply-to address for the emails
+  // Proof-of-payment photos taken at the door are emailed here (comma-separate several).
+  // Blank = REPLY_TO.
+  ORGANIZER_EMAIL: '',
   // Distressed "WANTED / DEAD OR ALIVE" header cut from the poster
   // (docs/email/header.jpg). If it can't be fetched, a text header is used.
   EMAIL_HEADER_IMAGE_URL: 'https://raw.githubusercontent.com/5leur/stranger-danger/main/docs/email/header.jpg',
@@ -54,18 +58,23 @@ const CONFIG = {
   // automatically as walk-ins. Can also be forced on/off from the 🎃 Party menu.
   WALK_IN_START: '2026-10-31T18:00',
   WALK_IN_END: '2026-11-01T06:00',
-  WALK_IN_AUTO_CHECK_IN: true, // walk-ins are already at the door, so check them in straight away
-  // Door photos are saved next to the form's own proof-of-payment uploads. This folder
-  // is only used if the form has no file-upload question yet.
-  DOOR_PROOF_FOLDER_NAME: 'Stranger Danger – door payment proofs',
+  WALK_IN_AUTO_CHECK_IN: true, // walk-ins are already at the door, so their entry is recorded straight away
+  // Tapping Walk-In Registration on the scanner also turns walk-in mode on for this many
+  // minutes, so a walk-in is recorded even outside the window above.
+  WALK_IN_TAP_MINUTES: 30,
 
   ID_PREFIX: 'SD',             // Guest IDs look like SD-7K3MX-Q9P2A
   SHEET_NAME: '',              // blank = the sheet linked to the form
   EMAIL_HEADER: '',            // blank = auto-detect a column containing "email"
   NAME_HEADER: '',             // blank = auto-detect name / first + last name
+  FIRST_NAME_HEADER: '',       // blank = auto-detect "First Name"; used to greet guests in emails
   PAYMENT_TYPE_HEADER: '',     // blank = auto-detect e.g. "Payment Type" / "Payment Option"
   PROOF_HEADER: '',            // blank = auto-detect the form's proof-of-payment upload
   INSTALLMENT_PATTERN: /install|partial|down\s*payment/i, // answers that mean "installment"
+  // Only installments can be partly paid. Any other approved payment type (full, group…)
+  // counts as paid in full, whatever the Amount Paid cell says. Group members whose
+  // share was paid by someone else (Amount Paid 0) are therefore fully paid too.
+  GROUP_PATTERN: /group/i,
   DISPLAY_FIELDS: [],          // form questions to show the bouncer; [] = all except the ones below
   HIDDEN_FIELDS: /privacy|terms|condition|consent|agree/i, // consent checkboxes etc. never shown at the door
 };
@@ -81,7 +90,6 @@ const COL = {
   QR_EMAILED: 'QR Emailed At',
   REMINDED: 'Reminder Sent At',
   CHECKED_IN: 'Checked In At',
-  DOOR_PROOF: 'Door Payment Proof',   // only added when the form has no proof-of-payment column
   NOTES: 'Door Notes',
 };
 const INTERNAL_COLS = Object.keys(COL).map(function (k) { return COL[k]; });
@@ -143,6 +151,8 @@ function setup() {
     '• Installment guests with a balance are reminded ' + daysLabel_(CONFIG.REMINDER_DAYS_BEFORE) +
     ' before the party (' + (autoRemindersOn_() ? 'automatic reminders are ON' : 'automatic reminders are OFF') + ').\n' +
     '• Walk-in mode: ' + walkInModeLabel_() + '\n' +
+    '• Door proof-of-payment photos are emailed to: ' +
+    ((CONFIG.ORGANIZER_EMAIL || CONFIG.REPLY_TO) || 'NOBODY YET. Set ORGANIZER_EMAIL in CONFIG') + '\n' +
     '• For people who registered before setup, use the 🎃 Party menu to send their emails.\n' +
     '• Next: Deploy → New deployment → Web app (see README).',
     ui.ButtonSet.OK
@@ -430,6 +440,10 @@ function processNewRow_(sheet, row, h) {
     g.status = STATUS.PENDING;
   }
   if (found.rec[COL.REG_EMAILED]) return 'skipped';
+  if (g.status === STATUS.APPROVED) {
+    sheet.getRange(row, h[COL.REG_EMAILED]).setValue('Skipped (already approved)');
+    return 'skipped';
+  }
   if (!g.email) throw new Error('no email address in this row');
 
   sendEmail_('registration', g);
@@ -457,7 +471,9 @@ function processWalkIn_(sheet, row, h) {
   sheet.getRange(row, h[COL.AMOUNT]).setValue(amount);
   sheet.getRange(row, h[COL.CONFIRMED]).setValue(amount);
   if (CONFIG.WALK_IN_AUTO_CHECK_IN) sheet.getRange(row, h[COL.CHECKED_IN]).setValue(now);
-  appendNote_(sheet, row, h, 'Walk-in ' + fmtDate_(now));
+  sheet.getRange(row, h[COL.REG_EMAILED]).setValue('Skipped (walk-in)');
+  appendNote_(sheet, row, h, 'Walk-in ' + fmtDate_(now) + (CONFIG.WALK_IN_AUTO_CHECK_IN ? ', entry recorded' : ''));
+  SpreadsheetApp.flush();
   if (!g.email) throw new Error('no email address in this row');
 
   const ticket = readRow_(sheet, row, h).guest;
@@ -481,7 +497,7 @@ function syncTicket_(sheet, row, h, force) {
     return syncTicket_(sheet, row, h, force);
   }
 
-  if (found.rec[COL.AMOUNT] === '' || found.rec[COL.AMOUNT] == null) {
+  if ((found.rec[COL.AMOUNT] === '' || found.rec[COL.AMOUNT] == null) && !g.group) {
     const assumed = g.installment ? Math.min(CONFIG.INSTALLMENT_FIRST_PAYMENT, g.price) : g.price;
     sheet.getRange(row, h[COL.AMOUNT]).setValue(assumed);
     return syncTicket_(sheet, row, h, force);
@@ -613,10 +629,7 @@ function headerImage_() {
 
 /** What each email says. Kept apart from the layout so the wording is easy to edit. */
 function emailCopy_(kind, g) {
-  // Names come in as "Last, First Middle" or "First Last".
-  const name = String(g.name || '').trim();
-  const given = name.indexOf(',') !== -1 ? name.slice(name.indexOf(',') + 1) : name;
-  const first = given.trim().split(/\s+/)[0] || 'friend';
+  const first = g.firstName || 'friend';
   const balance = money_(g.balance);
   if (kind === 'registration') {
     return {
@@ -665,7 +678,9 @@ function emailCopy_(kind, g) {
   return {
     heading: 'Payment confirmed',
     intro: 'You\'re on the list, ' + first + '. This is your QR ticket. Show it to the bouncer at the door.',
-    status: { label: '✓ Paid in full', note: 'You\'re cleared for entry. See you on the other side.', filled: true },
+    status: g.group
+      ? { label: '✓ Paid in full · group payment', note: 'Your group\'s payment covers you. You\'re cleared for entry.', filled: true }
+      : { label: '✓ Paid in full', note: 'You\'re cleared for entry. See you on the other side.', filled: true },
     fine: 'Your QR code belongs to you alone, so don\'t share it. Screenshot it or keep this email handy, ' +
       'and turn your brightness up at the door. The QR is also attached as an image.',
   };
@@ -885,26 +900,36 @@ function handleApi_(p) {
 
         const now = new Date();
         const sheet = found.sheet, row = found.row, h = found.h;
-        const proofH = detectProofHeader_(found.rec);
-        const file = doorProofFolder_(sheet, h, proofH).createFile(Utilities.newBlob(
-          Utilities.base64Decode(photo), 'image/jpeg',
-          g.id + ' ' + (g.name || 'guest') + ' ' + Utilities.formatDate(now, tz_(), 'yyyy-MM-dd HHmm') + '.jpg'));
-
         const collected = g.price - g.amountPaid;
-        // Attach the photo to the guest's own form submission (its proof-of-payment cell),
-        // falling back to the script's own column if the form has no upload question.
-        const proofCol = (proofH && h[proofH]) || h[COL.DOOR_PROOF];
-        if (!proofCol) throw new Error('no proof-of-payment column; run 🎃 Party → Run setup');
-        const prevProof = String(sheet.getRange(row, proofCol).getValue() || '');
-        sheet.getRange(row, proofCol).setValue(prevProof ? prevProof + ', ' + file.getUrl() : file.getUrl());
+        const photoBlob = Utilities.newBlob(Utilities.base64Decode(photo), 'image/jpeg',
+          g.id + ' ' + Utilities.formatDate(now, tz_(), 'yyyy-MM-dd HHmm') + '.jpg');
+
+        // Record the payment first so the door never stalls on the email.
         sheet.getRange(row, h[COL.AMOUNT]).setValue(g.price);
         sheet.getRange(row, h[COL.STATUS]).setValue(STATUS.APPROVED);
-        // Paid at the door: no confirmation email needed.
+        // Paid at the door: no confirmation email to the guest.
         sheet.getRange(row, h[COL.CONFIRMED]).setValue(g.price);
-        appendNote_(sheet, row, h, 'Collected ' + money_(collected) + ' at door ' + fmtDate_(now));
+
+        let proofEmailed = false, proofError = '';
+        try {
+          emailDoorProof_(g, collected, photoBlob, now);
+          proofEmailed = true;
+        } catch (err) {
+          proofError = String(err && err.message || err);
+        }
+        appendNote_(sheet, row, h, 'Collected ' + money_(collected) + ' at door ' + fmtDate_(now) + '; ' +
+          (proofEmailed ? 'proof photo emailed to organizers' : 'proof photo NOT emailed (' + proofError + ')'));
         SpreadsheetApp.flush();
-        return { ok: true, collected: collected, guest: findGuest_(p.id).guest };
+        return { ok: true, collected: collected, proofEmailed: proofEmailed, proofError: proofError,
+          guest: findGuest_(p.id).guest };
       });
+
+    case 'walkin': {
+      // The doorman opened the walk-in form: treat the next submissions as walk-ins.
+      const until = Date.now() + CONFIG.WALK_IN_TAP_MINUTES * 60000;
+      PropertiesService.getScriptProperties().setProperty('WALK_IN_ARMED_UNTIL', String(until));
+      return { ok: true, until: until };
+    }
 
     case 'admit':
       return withLock_(function () {
@@ -935,36 +960,31 @@ function checkPin_(pin) {
   }
 }
 
-/**
- * Where door photos go: the Drive folder the form already saves its proof-of-payment
- * uploads in, so every guest's proofs sit together. Falls back to a folder of our own.
- */
-function doorProofFolder_(sheet, h, proofH) {
-  const props = PropertiesService.getScriptProperties();
-  const id = props.getProperty('DOOR_PROOF_FOLDER_ID');
-  if (id) {
-    try { return DriveApp.getFolderById(id); } catch (err) { /* deleted — find or make another */ }
-  }
-  let folder = null;
-  if (proofH && h[proofH] && sheet.getLastRow() > 1) {
-    const cells = sheet.getRange(2, h[proofH], sheet.getLastRow() - 1, 1).getValues();
-    for (let i = 0; i < cells.length && !folder; i++) {
-      const fileId = extractUrls_(cells[i][0]).map(driveFileId_).filter(Boolean)[0];
-      if (!fileId) continue;
-      try {
-        const parents = DriveApp.getFileById(fileId).getParents();
-        if (parents.hasNext()) folder = parents.next();
-      } catch (err) { /* no access to that file — try the next row */ }
-    }
-  }
-  folder = folder || DriveApp.createFolder(CONFIG.DOOR_PROOF_FOLDER_NAME);
-  props.setProperty('DOOR_PROOF_FOLDER_ID', folder.getId());
-  return folder;
-}
-
-function driveFileId_(url) {
-  const m = String(url).match(/[?&]id=([\w-]{10,})/) || String(url).match(/\/d\/([\w-]{10,})/);
-  return m ? m[1] : null;
+/** Emails the proof-of-payment photo taken at the door to the organizers. */
+function emailDoorProof_(g, collected, photo, when) {
+  const to = CONFIG.ORGANIZER_EMAIL || CONFIG.REPLY_TO;
+  if (!to) throw new Error('ORGANIZER_EMAIL is not set in CONFIG');
+  if (MailApp.getRemainingDailyQuota() < 1) throw new Error('daily email quota reached');
+  const rows = [
+    ['Guest', g.name], ['Guest ID', g.id], ['Email', g.email], ['Payment type', g.paymentType],
+    ['Collected at the door', money_(collected)], ['Paid before (approved)', money_(g.amountPaid)],
+    ['Time', fmtDate_(when)],
+  ];
+  MailApp.sendEmail({
+    to: to,
+    subject: 'Door payment: ' + (g.name || g.id) + ' (' + g.id + ') – ' + money_(collected),
+    name: CONFIG.ORGANIZER_NAME + ' door scanner',
+    htmlBody: '<p>Proof of payment captured at the door.</p><table cellpadding="4">' +
+      rows.map(function (r) {
+        return '<tr><td style="color:#666">' + esc_(r[0]) + '</td><td><b>' + esc_(r[1]) + '</b></td></tr>';
+      }).join('') +
+      '</table><p><img src="cid:proof" style="max-width:100%;height:auto;"></p>' +
+      '<p style="color:#666">The guest has been marked paid in full in the sheet.</p>',
+    body: 'Proof of payment captured at the door.\n\n' +
+      rows.map(function (r) { return r[0] + ': ' + r[1]; }).join('\n') + '\n\nPhoto attached.',
+    inlineImages: { proof: photo },
+    attachments: [photo.copyBlob()],
+  });
 }
 
 function registrationFormUrl_() {
@@ -987,11 +1007,17 @@ function getPin_() {
   return PropertiesService.getScriptProperties().getProperty('BOUNCER_PIN');
 }
 
-/** Walk-in mode: 'auto' follows WALK_IN_START/END; 'on'/'off' are set from the menu. */
+/**
+ * Walk-in mode: 'auto' follows WALK_IN_START/END and is also switched on for
+ * WALK_IN_TAP_MINUTES whenever a doorman taps Walk-In Registration; 'on'/'off'
+ * are forced from the menu.
+ */
 function walkInActive_() {
-  const mode = PropertiesService.getScriptProperties().getProperty('WALK_IN_MODE') || 'auto';
+  const props = PropertiesService.getScriptProperties();
+  const mode = props.getProperty('WALK_IN_MODE') || 'auto';
   if (mode === 'on') return true;
   if (mode === 'off') return false;
+  if (Number(props.getProperty('WALK_IN_ARMED_UNTIL') || 0) > Date.now()) return true;
   const now = Utilities.formatDate(new Date(), tz_(), "yyyy-MM-dd'T'HH:mm");
   return now >= CONFIG.WALK_IN_START && now < CONFIG.WALK_IN_END;
 }
@@ -1067,10 +1093,8 @@ function headerMap_(sheet) {
 function ensureColumns_(sheet) {
   const h = headerMap_(sheet);
   let next = sheet.getLastColumn() + 1;
-  const hasFormProof = !!detectProofHeader_(h);
   INTERNAL_COLS.forEach(function (name) {
     if (h[name]) return;
-    if (name === COL.DOOR_PROOF && hasFormProof) return; // door photos go into the form's own column
     if (next > sheet.getMaxColumns()) sheet.insertColumnsAfter(sheet.getMaxColumns(), 1);
     sheet.getRange(1, next).setValue(name).setFontWeight('bold').setBackground('#ffe0c2');
     next++;
@@ -1112,6 +1136,11 @@ function detectNameHeaders_(rec) {
   return any ? [any] : [];
 }
 
+function detectFirstNameHeader_(rec) {
+  if (CONFIG.FIRST_NAME_HEADER) return CONFIG.FIRST_NAME_HEADER;
+  return formHeaders_(rec).find(function (k) { return /first\s*name|given\s*name|nick\s*name/i.test(k); }) || null;
+}
+
 function detectPaymentTypeHeader_(rec) {
   if (CONFIG.PAYMENT_TYPE_HEADER) return CONFIG.PAYMENT_TYPE_HEADER;
   return formHeaders_(rec).find(function (k) {
@@ -1132,7 +1161,8 @@ function recordToGuest_(rec) {
   const name = nameHs.map(function (k) { return String(rec[k] || '').trim(); })
     .filter(Boolean).join(' ');
 
-  const skip = ['Timestamp', emailH, proofH].concat(nameHs);
+  const firstH = detectFirstNameHeader_(rec);
+  const skip = ['Timestamp', emailH, proofH, firstH].concat(nameHs);
   const fields = CONFIG.DISPLAY_FIELDS.length
     ? CONFIG.DISPLAY_FIELDS
     : formHeaders_(rec).filter(function (k) { return skip.indexOf(k) === -1 && !CONFIG.HIDDEN_FIELDS.test(k); });
@@ -1141,21 +1171,33 @@ function recordToGuest_(rec) {
     .map(function (k) { return { label: k, value: rec[k] instanceof Date ? fmtDate_(rec[k]) : String(rec[k]) }; });
 
   const status = String(rec[COL.STATUS] || '').trim() || STATUS.PENDING;
+  const approved = status === STATUS.APPROVED;
   const price = Number(CONFIG.TICKET_PRICE) || 0;
-  const amountPaid = status === STATUS.APPROVED ? parseAmount_(rec[COL.AMOUNT]) : 0;
-  const proofs = extractUrls_(proofH ? rec[proofH] : '').concat(extractUrls_(rec[COL.DOOR_PROOF]));
+  const type = typeH ? String(rec[typeH] || '') : '';
+  const installment = CONFIG.INSTALLMENT_PATTERN.test(type);
+  const group = !installment && CONFIG.GROUP_PATTERN.test(type);
+  const recorded = parseAmount_(rec[COL.AMOUNT]);
+  // Installments are the only partial case; every other approved payment covers the ticket.
+  const amountPaid = !approved ? 0 : installment ? recorded : Math.max(recorded, price);
+  const proofs = extractUrls_(proofH ? rec[proofH] : '');
   const checkedAt = rec[COL.CHECKED_IN];
+  const fullName = String(name || '');
+  const given = fullName.indexOf(',') !== -1 ? fullName.slice(fullName.indexOf(',') + 1) : fullName;
 
   return {
     id: String(rec[COL.ID] || '').trim(),
     name: name,
+    firstName: (firstH && String(rec[firstH] || '').trim()) || given.trim().split(/\s+/)[0] || '',
     email: emailH ? String(rec[emailH] || '').trim() : '',
     status: status,
-    installment: !!(typeH && CONFIG.INSTALLMENT_PATTERN.test(String(rec[typeH] || ''))),
+    paymentType: type,
+    installment: installment,
+    group: group,
     price: price,
     amountPaid: amountPaid,
+    amountRecorded: recorded,
     balance: Math.max(0, price - amountPaid),
-    paid: status === STATUS.APPROVED && amountPaid >= price,
+    paid: approved && amountPaid >= price,
     currency: CONFIG.CURRENCY,
     proofs: proofs,
     checkedIn: !!checkedAt,
