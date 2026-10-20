@@ -8,9 +8,12 @@
  *   2. When an organizer sets Payment Status to "Approved", emails the guest
  *      their QR ticket as confirmation (again whenever more of an
  *      installment is approved).
- *   3. A week before the party, reminds installment guests about their
+ *   3. The day before the party, reminds installment guests about their
  *      balance (automatic, can be switched off, or sent by hand).
- *   4. Exposes a PIN-protected JSON API for the bouncer's scanner page
+ *   4. During the party (walk-in mode), approves new registrations straight
+ *      away: the doorman has checked the payment in person, so the guest gets
+ *      a walk-in QR confirmation instead of the "For Approval" email.
+ *   5. Exposes a PIN-protected JSON API for the bouncer's scanner page
  *      (docs/index.html): look up, collect proof of payment, check in.
  *
  * See README.md for setup steps.
@@ -36,7 +39,7 @@ const CONFIG = {
     'Please settle your payment with the organizers before the party. ' +
     'Guests who have not paid will be asked to pay at the door.',
 
-  REMINDER_DAYS_BEFORE: 7,     // installment reminder goes out this many days before the party
+  REMINDER_DAYS_BEFORE: 1,     // installment reminder goes out this many days before the party
   REMINDER_HOUR: 9,            // ...at about this hour (spreadsheet time zone)
 
   ORGANIZER_NAME: 'The Stranger Danger Crew',
@@ -47,6 +50,13 @@ const CONFIG = {
 
   // Walk-in button on the scanner opens this form. Blank = the form linked to the sheet.
   REGISTRATION_FORM_URL: '',
+  // Walk-in mode: form submissions in this window (spreadsheet time zone) are approved
+  // automatically as walk-ins. Can also be forced on/off from the 🎃 Party menu.
+  WALK_IN_START: '2026-10-31T18:00',
+  WALK_IN_END: '2026-11-01T06:00',
+  WALK_IN_AUTO_CHECK_IN: true, // walk-ins are already at the door, so check them in straight away
+  // Door photos are saved next to the form's own proof-of-payment uploads. This folder
+  // is only used if the form has no file-upload question yet.
   DOOR_PROOF_FOLDER_NAME: 'Stranger Danger – door payment proofs',
 
   ID_PREFIX: 'SD',             // Guest IDs look like SD-7K3MX-Q9P2A
@@ -56,7 +66,8 @@ const CONFIG = {
   PAYMENT_TYPE_HEADER: '',     // blank = auto-detect e.g. "Payment Type" / "Payment Option"
   PROOF_HEADER: '',            // blank = auto-detect the form's proof-of-payment upload
   INSTALLMENT_PATTERN: /install|partial|down\s*payment/i, // answers that mean "installment"
-  DISPLAY_FIELDS: [],          // form questions to show the bouncer; [] = all
+  DISPLAY_FIELDS: [],          // form questions to show the bouncer; [] = all except the ones below
+  HIDDEN_FIELDS: /privacy|terms|condition|consent|agree/i, // consent checkboxes etc. never shown at the door
 };
 // =====================================================================
 
@@ -70,7 +81,7 @@ const COL = {
   QR_EMAILED: 'QR Emailed At',
   REMINDED: 'Reminder Sent At',
   CHECKED_IN: 'Checked In At',
-  DOOR_PROOF: 'Door Payment Proof',
+  DOOR_PROOF: 'Door Payment Proof',   // only added when the form has no proof-of-payment column
   NOTES: 'Door Notes',
 };
 const INTERNAL_COLS = Object.keys(COL).map(function (k) { return COL[k]; });
@@ -92,6 +103,8 @@ function onOpen() {
     .addSeparator()
     .addItem('Send installment reminders now', 'sendRemindersNow')
     .addItem('Turn automatic installment reminders on/off', 'toggleAutoReminders')
+    .addSeparator()
+    .addItem('Walk-in mode: automatic / on / off', 'cycleWalkInMode')
     .addSeparator()
     .addItem('Show door stats', 'showStats')
     .addItem('Change bouncer PIN', 'changePin')
@@ -125,8 +138,9 @@ function setup() {
     '• New registrations get a Guest ID and a "payment For Approval" email.\n' +
     '• To approve a payment, set "' + COL.STATUS + '" to "' + STATUS.APPROVED + '" (and fill in "' +
     COL.AMOUNT + '"). The guest is emailed their QR ticket.\n' +
-    '• Installment guests with a balance are reminded ' + CONFIG.REMINDER_DAYS_BEFORE +
-    ' days before the party (' + (autoRemindersOn_() ? 'automatic reminders are ON' : 'automatic reminders are OFF') + ').\n' +
+    '• Installment guests with a balance are reminded ' + daysLabel_(CONFIG.REMINDER_DAYS_BEFORE) +
+    ' before the party (' + (autoRemindersOn_() ? 'automatic reminders are ON' : 'automatic reminders are OFF') + ').\n' +
+    '• Walk-in mode: ' + walkInModeLabel_() + '\n' +
     '• For people who registered before setup, use the 🎃 Party menu to send their emails.\n' +
     '• Next: Deploy → New deployment → Web app (see README).',
     ui.ButtonSet.OK
@@ -228,8 +242,20 @@ function toggleAutoReminders() {
   PropertiesService.getScriptProperties().setProperty('AUTO_REMINDERS', on ? 'on' : 'off');
   SpreadsheetApp.getUi().alert(on
     ? 'Automatic installment reminders are ON. They go out on ' + reminderDateIso_() +
-      ' (' + CONFIG.REMINDER_DAYS_BEFORE + ' days before the party), around ' + CONFIG.REMINDER_HOUR + ':00.'
+      ' (' + daysLabel_(CONFIG.REMINDER_DAYS_BEFORE) + ' before the party), around ' + CONFIG.REMINDER_HOUR + ':00.'
     : 'Automatic installment reminders are OFF. You can still use "Send installment reminders now".');
+}
+
+function cycleWalkInMode() {
+  const order = ['auto', 'on', 'off'];
+  const props = PropertiesService.getScriptProperties();
+  const cur = props.getProperty('WALK_IN_MODE') || 'auto';
+  props.setProperty('WALK_IN_MODE', order[(order.indexOf(cur) + 1) % order.length]);
+  SpreadsheetApp.getUi().alert('Walk-in mode: ' + walkInModeLabel_() + '\n\n' +
+    'While walk-in mode is active, new form submissions are approved automatically (the doorman checks ' +
+    'the payment in person), get a walk-in QR confirmation instead of the "For Approval" email' +
+    (CONFIG.WALK_IN_AUTO_CHECK_IN ? ', and are checked in.' : '.') +
+    '\n\nChoose this menu item again to switch between automatic / on / off.');
 }
 
 function showStats() {
@@ -252,7 +278,9 @@ function onFormSubmitTrigger(e) {
     const sheet = e && e.range ? e.range.getSheet() : getSheet_();
     const row = e && e.range ? e.range.getRow() : sheet.getLastRow();
     ensureColumns_(sheet);
-    processNewRow_(sheet, row, headerMap_(sheet));
+    const h = headerMap_(sheet);
+    if (walkInActive_()) processWalkIn_(sheet, row, h);
+    else processNewRow_(sheet, row, h);
   });
 }
 
@@ -311,6 +339,35 @@ function processNewRow_(sheet, row, h) {
 
   sendEmail_('registration', g);
   sheet.getRange(row, h[COL.REG_EMAILED]).setValue(new Date());
+  return 'sent';
+}
+
+/**
+ * Walk-in registered at the door during the party: the doorman has already
+ * checked the full payment, so approve it, skip the "For Approval" email and
+ * send the QR confirmation straight away.
+ */
+function processWalkIn_(sheet, row, h) {
+  const found = readRow_(sheet, row, h);
+  const g = found.guest;
+  if (!g.email && !g.name) return 'skipped';
+  if (!g.id) {
+    g.id = newGuestId_(sheet, h);
+    sheet.getRange(row, h[COL.ID]).setValue(g.id);
+  }
+  formatRow_(sheet, row, h, found.rec);
+  const now = new Date();
+  const amount = Math.max(parseAmount_(found.rec[COL.AMOUNT]), g.price);
+  sheet.getRange(row, h[COL.STATUS]).setValue(STATUS.APPROVED);
+  sheet.getRange(row, h[COL.AMOUNT]).setValue(amount);
+  sheet.getRange(row, h[COL.CONFIRMED]).setValue(amount);
+  if (CONFIG.WALK_IN_AUTO_CHECK_IN) sheet.getRange(row, h[COL.CHECKED_IN]).setValue(now);
+  appendNote_(sheet, row, h, 'Walk-in ' + fmtDate_(now));
+  if (!g.email) throw new Error('no email address in this row');
+
+  const ticket = readRow_(sheet, row, h).guest;
+  sendEmail_('walkin', ticket);
+  sheet.getRange(row, h[COL.QR_EMAILED]).setValue(now);
   return 'sent';
 }
 
@@ -401,11 +458,11 @@ const EMAIL_STYLE = {
   BODY: 'Arial,Helvetica,sans-serif',
 };
 
-/** kind: 'registration' | 'ticket' | 'reminder' */
+/** kind: 'registration' | 'ticket' | 'walkin' | 'reminder' */
 function sendEmail_(kind, guest) {
   const inlineImages = {};
   const attachments = [];
-  if (kind === 'ticket') {
+  if (kind === 'ticket' || kind === 'walkin') {
     const qr = qrPng_(guest.id);
     inlineImages.qrcode = qr;
     attachments.push(qr.copyBlob().setName(guest.id + '.png'));
@@ -417,6 +474,7 @@ function sendEmail_(kind, guest) {
   const subject = {
     registration: 'Registration received: ' + event + ' (payment for approval)',
     ticket: 'Payment confirmed: your QR ticket to ' + event,
+    walkin: 'Walk-in confirmed: your QR ticket to ' + event,
     reminder: 'Reminder: ' + money_(guest.balance) + ' balance for ' + event,
   }[kind];
 
@@ -454,7 +512,10 @@ function headerImage_() {
 
 /** What each email says. Kept apart from the layout so the wording is easy to edit. */
 function emailCopy_(kind, g) {
-  const first = (g.name || '').split(' ')[0] || 'friend';
+  // Names come in as "Last, First Middle" or "First Last".
+  const name = String(g.name || '').trim();
+  const given = name.indexOf(',') !== -1 ? name.slice(name.indexOf(',') + 1) : name;
+  const first = given.trim().split(/\s+/)[0] || 'friend';
   const balance = money_(g.balance);
   if (kind === 'registration') {
     return {
@@ -470,10 +531,20 @@ function emailCopy_(kind, g) {
     return {
       heading: days > 1 ? days + ' days to go' : days === 1 ? 'One day to go' : 'It\'s party time',
       intro: 'Hi ' + first + ', you chose to pay in installments and still have a balance of ' + balance +
-        '. Please settle it before the party so you can walk straight in.',
+        '. You\'ll need to settle it before entering the party: send it ahead of time, or pay at the door ' +
+        'by cash or digital banking.',
       status: { label: 'Balance due: ' + balance, note: CONFIG.PAYMENT_INSTRUCTIONS, filled: false },
       fine: 'Already sent it? You can ignore this. We\'ll email your updated ticket once the payment is approved. ' +
         'Your Guest ID is ' + g.id + '.',
+    };
+  }
+  if (kind === 'walkin') {
+    return {
+      heading: 'Walk-in confirmed',
+      intro: 'Welcome to the party, ' + first + '. You registered at the door and our doorman checked your ' +
+        'payment in person. This is your QR ticket. Keep it handy in case you step out and come back in.',
+      status: { label: '✓ Paid in full · walk-in', note: 'You\'re cleared for entry. See you on the other side.', filled: true },
+      fine: 'Your QR code belongs to you alone, so don\'t share it. The QR is also attached as an image.',
     };
   }
   // ticket
@@ -511,7 +582,7 @@ function buildEmailHtml_(kind, guest, hasHeaderImage) {
       'DEAD OR ALIVE</td></tr></table>';
 
   // Mugshot frame: the QR on a ticket, a "pending" card on the registration email.
-  const centerpiece = kind === 'ticket'
+  const centerpiece = (kind === 'ticket' || kind === 'walkin')
     ? '<div style="display:inline-block;background:#ffffff;padding:12px;">' +
       '<img src="cid:qrcode" width="220" height="220" alt="Your entry QR code" style="display:block;border:0;">' +
       '</div>'
@@ -621,7 +692,7 @@ function buildEmailText_(kind, g) {
     '',
     copy.status.label.toUpperCase() + ': ' + copy.status.note,
     '',
-    'Guest ID: ' + g.id + (kind === 'ticket' ? ' (QR code attached, show it at the door)' : ''),
+    'Guest ID: ' + g.id + (kind === 'ticket' || kind === 'walkin' ? ' (QR code attached, show it at the door)' : ''),
     '',
     CONFIG.EVENT_VENUE,
     CONFIG.EVENT_DATE + ', ' + CONFIG.EVENT_TIME,
@@ -703,14 +774,19 @@ function handleApi_(p) {
         if (photo.length > MAX_PHOTO_B64) return { ok: false, error: 'photo_too_large' };
 
         const now = new Date();
-        const file = doorProofFolder_().createFile(Utilities.newBlob(
+        const sheet = found.sheet, row = found.row, h = found.h;
+        const proofH = detectProofHeader_(found.rec);
+        const file = doorProofFolder_(sheet, h, proofH).createFile(Utilities.newBlob(
           Utilities.base64Decode(photo), 'image/jpeg',
           g.id + ' ' + (g.name || 'guest') + ' ' + Utilities.formatDate(now, tz_(), 'yyyy-MM-dd HHmm') + '.jpg'));
 
-        const sheet = found.sheet, row = found.row, h = found.h;
         const collected = g.price - g.amountPaid;
-        const prevProof = String(found.rec[COL.DOOR_PROOF] || '');
-        sheet.getRange(row, h[COL.DOOR_PROOF]).setValue(prevProof ? prevProof + '\n' + file.getUrl() : file.getUrl());
+        // Attach the photo to the guest's own form submission (its proof-of-payment cell),
+        // falling back to the script's own column if the form has no upload question.
+        const proofCol = (proofH && h[proofH]) || h[COL.DOOR_PROOF];
+        if (!proofCol) throw new Error('no proof-of-payment column; run 🎃 Party → Run setup');
+        const prevProof = String(sheet.getRange(row, proofCol).getValue() || '');
+        sheet.getRange(row, proofCol).setValue(prevProof ? prevProof + ', ' + file.getUrl() : file.getUrl());
         sheet.getRange(row, h[COL.AMOUNT]).setValue(g.price);
         sheet.getRange(row, h[COL.STATUS]).setValue(STATUS.APPROVED);
         // Paid at the door: no confirmation email needed.
@@ -749,15 +825,36 @@ function checkPin_(pin) {
   }
 }
 
-function doorProofFolder_() {
+/**
+ * Where door photos go: the Drive folder the form already saves its proof-of-payment
+ * uploads in, so every guest's proofs sit together. Falls back to a folder of our own.
+ */
+function doorProofFolder_(sheet, h, proofH) {
   const props = PropertiesService.getScriptProperties();
   const id = props.getProperty('DOOR_PROOF_FOLDER_ID');
   if (id) {
-    try { return DriveApp.getFolderById(id); } catch (err) { /* deleted — make a new one */ }
+    try { return DriveApp.getFolderById(id); } catch (err) { /* deleted — find or make another */ }
   }
-  const folder = DriveApp.createFolder(CONFIG.DOOR_PROOF_FOLDER_NAME);
+  let folder = null;
+  if (proofH && h[proofH] && sheet.getLastRow() > 1) {
+    const cells = sheet.getRange(2, h[proofH], sheet.getLastRow() - 1, 1).getValues();
+    for (let i = 0; i < cells.length && !folder; i++) {
+      const fileId = extractUrls_(cells[i][0]).map(driveFileId_).filter(Boolean)[0];
+      if (!fileId) continue;
+      try {
+        const parents = DriveApp.getFileById(fileId).getParents();
+        if (parents.hasNext()) folder = parents.next();
+      } catch (err) { /* no access to that file — try the next row */ }
+    }
+  }
+  folder = folder || DriveApp.createFolder(CONFIG.DOOR_PROOF_FOLDER_NAME);
   props.setProperty('DOOR_PROOF_FOLDER_ID', folder.getId());
   return folder;
+}
+
+function driveFileId_(url) {
+  const m = String(url).match(/[?&]id=([\w-]{10,})/) || String(url).match(/\/d\/([\w-]{10,})/);
+  return m ? m[1] : null;
 }
 
 function registrationFormUrl_() {
@@ -778,6 +875,27 @@ function registrationFormUrl_() {
 
 function getPin_() {
   return PropertiesService.getScriptProperties().getProperty('BOUNCER_PIN');
+}
+
+/** Walk-in mode: 'auto' follows WALK_IN_START/END; 'on'/'off' are set from the menu. */
+function walkInActive_() {
+  const mode = PropertiesService.getScriptProperties().getProperty('WALK_IN_MODE') || 'auto';
+  if (mode === 'on') return true;
+  if (mode === 'off') return false;
+  const now = Utilities.formatDate(new Date(), tz_(), "yyyy-MM-dd'T'HH:mm");
+  return now >= CONFIG.WALK_IN_START && now < CONFIG.WALK_IN_END;
+}
+
+function walkInModeLabel_() {
+  const mode = PropertiesService.getScriptProperties().getProperty('WALK_IN_MODE') || 'auto';
+  if (mode === 'on') return 'ON (forced from the menu)';
+  if (mode === 'off') return 'OFF (forced from the menu)';
+  return 'AUTOMATIC, ' + CONFIG.WALK_IN_START.replace('T', ' ') + ' to ' + CONFIG.WALK_IN_END.replace('T', ' ') +
+    ' (currently ' + (walkInActive_() ? 'active' : 'inactive') + ')';
+}
+
+function daysLabel_(n) {
+  return n === 1 ? '1 day' : n + ' days';
 }
 
 function autoRemindersOn_() {
@@ -839,8 +957,10 @@ function headerMap_(sheet) {
 function ensureColumns_(sheet) {
   const h = headerMap_(sheet);
   let next = sheet.getLastColumn() + 1;
+  const hasFormProof = !!detectProofHeader_(h);
   INTERNAL_COLS.forEach(function (name) {
     if (h[name]) return;
+    if (name === COL.DOOR_PROOF && hasFormProof) return; // door photos go into the form's own column
     if (next > sheet.getMaxColumns()) sheet.insertColumnsAfter(sheet.getMaxColumns(), 1);
     sheet.getRange(1, next).setValue(name).setFontWeight('bold').setBackground('#ffe0c2');
     next++;
@@ -905,7 +1025,7 @@ function recordToGuest_(rec) {
   const skip = ['Timestamp', emailH, proofH].concat(nameHs);
   const fields = CONFIG.DISPLAY_FIELDS.length
     ? CONFIG.DISPLAY_FIELDS
-    : formHeaders_(rec).filter(function (k) { return skip.indexOf(k) === -1; });
+    : formHeaders_(rec).filter(function (k) { return skip.indexOf(k) === -1 && !CONFIG.HIDDEN_FIELDS.test(k); });
   const details = fields
     .filter(function (k) { return k in rec && rec[k] !== ''; })
     .map(function (k) { return { label: k, value: rec[k] instanceof Date ? fmtDate_(rec[k]) : String(rec[k]) }; });
