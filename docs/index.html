@@ -425,7 +425,10 @@
       var rows = [];
       if (g.email) rows.push(['Email', g.email]);
       (g.details || []).forEach(function (d) { rows.push([d.label, d.value]); });
-      rows.push(['Amount Paid', g.amountPaid > 0 ? Number(g.amountPaid).toLocaleString('en-US') : 'None']);
+      var shown = g.amountRecorded != null ? g.amountRecorded : g.amountPaid;
+      var amount = shown > 0 ? Number(shown).toLocaleString('en-US') : 'None';
+      if (g.group && g.paid) amount = shown > 0 ? amount + ' (group payment)' : 'Covered by group payment';
+      rows.push(['Amount Paid', amount]);
       rows.push(['Proof of Payment', g.proofs || []]);
       rows.forEach(function (r) {
         dl.appendChild(el('dt', r[0]));
@@ -479,7 +482,13 @@
     if (g.paid) {
       beep('ok');
       return showModal('paid', {
-        title: 'Paid', sub: [opts.collected ? 'Payment recorded. Good to go.' : 'Good to go.'], guest: g,
+        title: 'Paid',
+        sub: [opts.collected
+          ? (opts.proofWarning
+            ? 'Payment recorded, but the photo could not be emailed to the organizers (' + opts.proofWarning + '). Tell an organizer.'
+            : 'Payment recorded and proof emailed to the organizers. Good to go.')
+          : 'Good to go.'],
+        guest: g,
         actions: [
           { label: 'Admit & Check-In', primary: true, busyLabel: 'Checking in…', onClick: function () { admit(g.id); } },
           { label: 'Cancel', onClick: closeModal }
@@ -652,7 +661,7 @@
       .then(function (res) {
         if (!res.ok) throw new ApiError(res.error, res.error === 'not_found' ? 'This guest is no longer on the list.' : res.error);
         leaveCapture();
-        showGuest(res.guest, { collected: true });
+        showGuest(res.guest, { collected: true, proofWarning: res.proofEmailed === false ? (res.proofError || 'unknown error') : '' });
       })
       .catch(function (e) {
         frameState(null);
@@ -717,7 +726,12 @@
     lookup($('manualId').value);
   });
   $('walkIn').addEventListener('click', function () {
-    if (cfg.formUrl) { window.open(cfg.formUrl, '_blank', 'noopener'); return; }
+    if (cfg.formUrl) {
+      window.open(cfg.formUrl, '_blank', 'noopener');
+      // Tell the script a walk-in is registering, so their entry is recorded on submit.
+      call({ action: 'walkin' }).catch(function () {});
+      return;
+    }
     showError('No registration form link yet. Ask the organizer to set REGISTRATION_FORM_URL, then re-save the scanner settings.');
   });
 
