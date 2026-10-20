@@ -473,7 +473,7 @@ function sendEmail_(kind, guest) {
   const event = CONFIG.EVENT_NAME + ' ' + CONFIG.EVENT_EDITION;
   const subject = {
     registration: 'Registration received: ' + event + ' (payment for approval)',
-    ticket: 'Payment confirmed: your QR ticket to ' + event,
+    ticket: (guest.balance > 0 ? 'Installment approved' : 'Payment confirmed') + ': your QR ticket to ' + event,
     walkin: 'Walk-in confirmed: your QR ticket to ' + event,
     reminder: 'Reminder: ' + money_(guest.balance) + ' balance for ' + event,
   }[kind];
@@ -548,14 +548,23 @@ function emailCopy_(kind, g) {
     };
   }
   // ticket
+  if (g.balance > 0) {
+    return {
+      heading: 'Installment approved',
+      intro: 'Hi ' + first + ', your installment payment of ' + money_(g.amountPaid) + ' has been approved. ' +
+        'This is your QR ticket, but you will only be let in once your ticket is paid in full.',
+      status: { label: 'Partially paid · balance ' + balance,
+        note: money_(g.amountPaid) + ' of ' + money_(g.price) + ' received. Pay the remaining ' + balance +
+          ' in person at the door (cash or digital banking). The doorman will record it, then let you in.',
+        filled: false },
+      fine: 'Your QR code belongs to you alone, so don\'t share it. Screenshot it or keep this email handy, ' +
+        'and turn your brightness up at the door. The QR is also attached as an image.',
+    };
+  }
   return {
     heading: 'Payment confirmed',
     intro: 'You\'re on the list, ' + first + '. This is your QR ticket. Show it to the bouncer at the door.',
-    status: g.balance > 0
-      ? { label: 'Partially paid · balance ' + balance,
-          note: money_(g.amountPaid) + ' of ' + money_(g.price) + ' received. ' +
-            'Settle the remaining ' + balance + ' before the party or at the door.', filled: false }
-      : { label: '✓ Paid in full', note: 'You\'re cleared for entry. See you on the other side.', filled: true },
+    status: { label: '✓ Paid in full', note: 'You\'re cleared for entry. See you on the other side.', filled: true },
     fine: 'Your QR code belongs to you alone, so don\'t share it. Screenshot it or keep this email handy, ' +
       'and turn your brightness up at the door. The QR is also attached as an image.',
   };
