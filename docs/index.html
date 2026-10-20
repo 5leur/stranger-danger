@@ -674,7 +674,7 @@
     btn.disabled = true; btn.textContent = 'Saving…';
     $('retake').disabled = true;
     frameState('checking');
-    $('checkingLabel').textContent = 'Saving proof';
+    $('checkingLabel').textContent = 'Saving photo';
     call({ action: 'collect', id: capGuest.id, photo: capData }, true)
       .then(function (res) {
         if (!res.ok) throw new ApiError(res.error, res.error === 'not_found' ? 'This guest is no longer on the list.' : res.error);
