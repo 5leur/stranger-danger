@@ -78,7 +78,11 @@ In the **Responses** tab, click **Link to Sheets**.
 
    The permissions include **Gmail** (sending), **Drive** (saving door photos into one folder) and **Forms** (finding the form link for walk-ins).
 
-People who registered **before** setup: use **🎃 Party → Send registration emails to rows not yet emailed**. If you've already verified some payments, set them to *Approved* and use **Send QR tickets to approved guests not yet emailed**.
+People who registered **before** setup, if you **don't** want them to get the "Registration received" email:
+1. **🎃 Party → Prepare existing registrants (no emails)**. Every row gets a Guest ID and a Payment Status dropdown, and is marked so it never gets the registration email.
+2. Set **Payment Status** to *Approved* for everyone who has paid. Each guest is emailed their QR ticket right away. Or paste *Approved* down the whole column and run **🎃 Party → Send QR tickets to approved guests not yet emailed**.
+
+(Step 2 also works without step 1: approving a row that has no Guest ID yet gives it one and sends the ticket.) If you *do* want existing registrants to get the registration email, use **Send registration emails to rows not yet emailed** instead.
 
 ### 3. Deploy the doorman API
 In the Apps Script editor, click **Deploy → New deployment → ⚙️ → Web app** and set:
