@@ -35,7 +35,7 @@ const CONFIG = {
   TICKET_PRICE: 1200,
   TICKET_PRICE_LABEL: 'Door fee',
   CURRENCY: 'Php',
-  INSTALLMENT_FIRST_PAYMENT: 600, // assumed when an installment is approved with Amount Paid blank
+  INSTALLMENT_FIRST_PAYMENT: 600, // assumed when an installment is approved with no amount declared or verified
   PAYMENT_INSTRUCTIONS:
     'Please settle your payment with the organizers before the party. ' +
     'Guests who have not paid will be asked to pay at the door.',
@@ -70,6 +70,7 @@ const CONFIG = {
   FIRST_NAME_HEADER: '',       // blank = auto-detect "First Name"; used to greet guests in emails
   PAYMENT_TYPE_HEADER: '',     // blank = auto-detect e.g. "Payment Type" / "Payment Option"
   PROOF_HEADER: '',            // blank = auto-detect the form's proof-of-payment upload
+  AMOUNT_HEADER: '',           // blank = auto-detect the form's own "Amount Paid" question (read-only)
   INSTALLMENT_PATTERN: /install|partial|down\s*payment/i, // answers that mean "installment"
   // Only installments can be partly paid. Any other approved payment type (full, group…)
   // counts as paid in full, whatever the Amount Paid cell says. Group members whose
@@ -80,11 +81,14 @@ const CONFIG = {
 };
 // =====================================================================
 
-// Columns this script adds to the right of the form's columns.
+// Columns this script adds to the right of the form's columns. The script only ever
+// writes to these; every column that came from the form is left exactly as submitted.
 const COL = {
   ID: 'Guest ID',
   STATUS: 'Payment Status',
-  AMOUNT: 'Amount Paid',
+  // What the crew has verified as paid. Blank = go by the amount the guest declared on
+  // the form (which is read, never changed).
+  AMOUNT: 'Verified Amount',
   CONFIRMED: 'Confirmed Amount',       // amount covered by the last QR ticket email
   REG_EMAILED: 'Registration Emailed At',
   QR_EMAILED: 'QR Emailed At',
@@ -129,6 +133,7 @@ function setup() {
 
   const sheet = getSheet_();
   ensureColumns_(sheet);
+  const kept = withLock_(function () { return snapshotVerifiedAmounts_(sheet); });
 
   const handlers = ScriptApp.getProjectTriggers().map(function (t) { return t.getHandlerFunction(); });
   if (handlers.indexOf('onFormSubmitTrigger') === -1) {
@@ -153,10 +158,31 @@ function setup() {
     '• Walk-in mode: ' + walkInModeLabel_() + '\n' +
     '• Door proof-of-payment photos are emailed to: ' +
     ((CONFIG.ORGANIZER_EMAIL || CONFIG.REPLY_TO) || 'NOBODY YET. Set ORGANIZER_EMAIL in CONFIG') + '\n' +
+    '• The form\'s own columns are never changed. Payments are recorded in "' + COL.STATUS + '" and "' +
+    COL.AMOUNT + '"' + (kept ? ' (' + kept + ' approved guest(s) had their current amount copied there)' : '') + '.\n' +
     '• For people who registered before setup, use the 🎃 Party menu to send their emails.\n' +
     '• Next: Deploy → New deployment → Web app (see README).',
     ui.ButtonSet.OK
   );
+}
+
+/**
+ * One-off for sheets set up with an older version, which wrote into the form's own
+ * amount column: copies each approved guest's current amount into Verified Amount, so
+ * the form's original values can be restored without changing anyone's paid status.
+ * Rows that already have a Verified Amount are left alone. Returns how many were copied.
+ */
+function snapshotVerifiedAmounts_(sheet) {
+  const h = headerMap_(sheet);
+  let copied = 0;
+  for (let row = 2; row <= sheet.getLastRow(); row++) {
+    const found = readRow_(sheet, row, h);
+    const blank = found.rec[COL.AMOUNT] === '' || found.rec[COL.AMOUNT] == null;
+    if (!blank || found.guest.status !== STATUS.APPROVED || found.guest.amountDeclared <= 0) continue;
+    sheet.getRange(row, h[COL.AMOUNT]).setValue(found.guest.amountDeclared);
+    copied++;
+  }
+  return copied;
 }
 
 function changePin() {
@@ -284,7 +310,7 @@ function resendSelected() {
 
 /**
  * For installment guests who settle the balance before the party: approves the row,
- * sets Amount Paid to the full price and emails the "Paid in full" QR ticket.
+ * sets Verified Amount to the full price and emails the "Paid in full" QR ticket.
  */
 function markSelectedPaidInFull() {
   const ui = SpreadsheetApp.getUi();
@@ -322,7 +348,7 @@ function markPaidInFull_(sheet, row, h) {
   const found = readRow_(sheet, row, h);
   if (!found.guest.id) return 'skipped';
   const price = found.guest.price;
-  if (parseAmount_(found.rec[COL.AMOUNT]) < price) sheet.getRange(row, h[COL.AMOUNT]).setValue(price);
+  if (found.guest.amountRecorded < price) sheet.getRange(row, h[COL.AMOUNT]).setValue(price);
   if (found.guest.status !== STATUS.APPROVED) sheet.getRange(row, h[COL.STATUS]).setValue(STATUS.APPROVED);
   return syncTicket_(sheet, row, h, false);
 }
@@ -398,7 +424,15 @@ function onSheetEdit(e) {
   const typeCol = h[detectPaymentTypeHeader_(h)];
   const inRange = function (c) { return c && c >= c1 && c <= c2; };
   const typeEdited = inRange(typeCol);
-  if (!inRange(h[COL.STATUS]) && !inRange(h[COL.AMOUNT]) && !typeEdited) return;
+  const declaredEdited = inRange(h[detectDeclaredAmountHeader_(h)]);
+  const originalEdited = Object.keys(h).some(function (k) {
+    return INTERNAL_COLS.indexOf(k) === -1 && inRange(h[k]);
+  });
+  if (originalEdited && e.range.getRow() > 1) {
+    toast_('Heads up: that is original form data. The script never changes it. To record payments, use ' +
+      '"' + COL.STATUS + '" and "' + COL.AMOUNT + '" or the 🎃 Party menu.', 'Original data edited');
+  }
+  if (!inRange(h[COL.STATUS]) && !inRange(h[COL.AMOUNT]) && !typeEdited && !declaredEdited) return;
 
   const problems = [];
   withLock_(function () {
@@ -409,7 +443,7 @@ function onSheetEdit(e) {
         if (typeEdited) {
           const found = readRow_(sheet, row, h);
           if (found.guest.status === STATUS.APPROVED && !found.guest.installment &&
-              parseAmount_(found.rec[COL.AMOUNT]) < found.guest.price &&
+              found.guest.amountRecorded < found.guest.price &&
               /full/i.test(String(found.rec[detectPaymentTypeHeader_(h)] || ''))) {
             sheet.getRange(row, h[COL.AMOUNT]).setValue(found.guest.price);
           }
@@ -477,7 +511,7 @@ function processWalkIn_(sheet, row, h) {
   }
   formatRow_(sheet, row, h, found.rec);
   const now = new Date();
-  const amount = Math.max(parseAmount_(found.rec[COL.AMOUNT]), g.price);
+  const amount = Math.max(g.amountRecorded, g.price);
   sheet.getRange(row, h[COL.STATUS]).setValue(STATUS.APPROVED);
   sheet.getRange(row, h[COL.AMOUNT]).setValue(amount);
   sheet.getRange(row, h[COL.CONFIRMED]).setValue(amount);
@@ -508,9 +542,11 @@ function syncTicket_(sheet, row, h, force) {
     return syncTicket_(sheet, row, h, force);
   }
 
-  if ((found.rec[COL.AMOUNT] === '' || found.rec[COL.AMOUNT] == null) && !g.group) {
-    const assumed = g.installment ? Math.min(CONFIG.INSTALLMENT_FIRST_PAYMENT, g.price) : g.price;
-    sheet.getRange(row, h[COL.AMOUNT]).setValue(assumed);
+  // An approved installment with no amount anywhere (none declared on the form, none
+  // verified yet): assume the usual first payment, written to the script's own column.
+  const verifiedBlank = found.rec[COL.AMOUNT] === '' || found.rec[COL.AMOUNT] == null;
+  if (verifiedBlank && g.installment && g.amountRecorded <= 0) {
+    sheet.getRange(row, h[COL.AMOUNT]).setValue(Math.min(CONFIG.INSTALLMENT_FIRST_PAYMENT, g.price));
     return syncTicket_(sheet, row, h, force);
   }
   const confirmed = parseAmount_(found.rec[COL.CONFIRMED]);
@@ -1159,6 +1195,12 @@ function detectPaymentTypeHeader_(rec) {
   }) || null;
 }
 
+/** The form's own amount question (e.g. "Amount Paid"). Read only, never written. */
+function detectDeclaredAmountHeader_(rec) {
+  if (CONFIG.AMOUNT_HEADER) return CONFIG.AMOUNT_HEADER;
+  return formHeaders_(rec).find(function (k) { return /amount/i.test(k); }) || null;
+}
+
 function detectProofHeader_(rec) {
   if (CONFIG.PROOF_HEADER) return CONFIG.PROOF_HEADER;
   return formHeaders_(rec).find(function (k) { return /proof|receipt|screenshot/i.test(k); }) || null;
@@ -1173,7 +1215,8 @@ function recordToGuest_(rec) {
     .filter(Boolean).join(' ');
 
   const firstH = detectFirstNameHeader_(rec);
-  const skip = ['Timestamp', emailH, proofH, firstH].concat(nameHs);
+  const declaredH = detectDeclaredAmountHeader_(rec);
+  const skip = ['Timestamp', emailH, proofH, firstH, declaredH].concat(nameHs);
   const fields = CONFIG.DISPLAY_FIELDS.length
     ? CONFIG.DISPLAY_FIELDS
     : formHeaders_(rec).filter(function (k) { return skip.indexOf(k) === -1 && !CONFIG.HIDDEN_FIELDS.test(k); });
@@ -1187,7 +1230,10 @@ function recordToGuest_(rec) {
   const type = typeH ? String(rec[typeH] || '') : '';
   const installment = CONFIG.INSTALLMENT_PATTERN.test(type);
   const group = !installment && CONFIG.GROUP_PATTERN.test(type);
-  const recorded = parseAmount_(rec[COL.AMOUNT]);
+  // The crew's Verified Amount wins; otherwise the amount the guest declared on the form.
+  const verified = rec[COL.AMOUNT];
+  const declared = declaredH ? parseAmount_(rec[declaredH]) : 0;
+  const recorded = verified === '' || verified == null ? declared : parseAmount_(verified);
   // Installments are the only partial case; every other approved payment covers the ticket.
   const amountPaid = !approved ? 0 : installment ? recorded : Math.max(recorded, price);
   const proofs = extractUrls_(proofH ? rec[proofH] : '');
@@ -1207,6 +1253,7 @@ function recordToGuest_(rec) {
     price: price,
     amountPaid: amountPaid,
     amountRecorded: recorded,
+    amountDeclared: declared,
     balance: Math.max(0, price - amountPaid),
     paid: approved && amountPaid >= price,
     currency: CONFIG.CURRENCY,

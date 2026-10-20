@@ -9,7 +9,7 @@ Google Form ──► Google Sheet ──► Apps Script ──► 📧 1. "Regi
                     │                 │          📧 4. Walk-in QR confirmation (during the party)
           organizers set              │
           Payment Status /     JSON API (PIN-protected)
-          Amount Paid                 ▼
+          Verified Amount             ▼
                                docs/index.html  ◄── doorman's phone (scan, collect proof, check in)
 ```
 
@@ -18,7 +18,7 @@ Google Form ──► Google Sheet ──► Apps Script ──► 📧 1. "Regi
 1. **A guest submits the Google Form.** They get a Guest ID such as `SD-7K3MX-Q9P2A` and a *Registration received* email that says their payment is **For Approval**. This email has no QR code yet.
 2. **An organizer checks the payment** and sets **Payment Status** to **Approved** in the sheet. The guest then automatically gets the *Payment confirmed* email with their **QR ticket**.
    - **Full payment:** the ticket says *Paid in full*.
-   - **Installment:** the ticket shows the amount received and the balance. When more is approved later (raise **Amount Paid**), the guest gets an updated ticket. It's the same QR code, because each guest's code never changes.
+   - **Installment:** the ticket shows the amount received and the balance. When more is approved later (raise **Verified Amount**), the guest gets an updated ticket. It's the same QR code, because each guest's code never changes.
 3. **The day before the party,** every installment guest who still owes money gets a **balance reminder**. This runs automatically, and you can switch it off or send the reminders yourself from the menu.
 4. **At the door** the doorman scans the QR code, and a popup shows the result:
    - **PAID** (green): *Admit & Check-In*.
@@ -36,11 +36,13 @@ Google Form ──► Google Sheet ──► Apps Script ──► 📧 1. "Regi
 
 ### Columns the script adds to the sheet
 
+**The original form data is never changed.** The script only reads the columns that came from the form, and every process (approvals, door payments, installments, walk-ins, reminders, setup) writes only to the columns below, which it adds to the right. If someone edits an original form cell by hand, the sheet shows a reminder that it's original data.
+
 | Column | Who fills it | Meaning |
 |---|---|---|
 | `Guest ID` | script | The code inside the QR. Never changes |
 | `Payment Status` | **organizers** (dropdown) | `For Approval` (default) → `Approved`, or `Rejected` |
-| `Amount Paid` | **organizers** | Approved amount so far. Left blank on approval, it fills in 1200 for full payment or 600 for an installment (`INSTALLMENT_FIRST_PAYMENT`) |
+| `Verified Amount` | **organizers** / script | The amount the crew has verified. Leave it blank to go by the *Amount Paid* the guest declared on the form. An installment approved with no amount anywhere gets 600 here (`INSTALLMENT_FIRST_PAYMENT`). Door payments and *Mark paid in full* set it to 1200 |
 | `Confirmed Amount` | script | The amount the last QR ticket email covered. The script uses it to avoid emailing twice |
 | `Registration Emailed At`, `QR Emailed At`, `Reminder Sent At` | script | When each email went out |
 | `Checked In At` | script | Set when the doorman checks the guest in |
@@ -112,8 +114,8 @@ https://<your-scanner-page>/#api=<WEB_APP_URL>&pin=<PIN>
 
 | Task | How |
 |---|---|
-| Approve a payment | Set **Payment Status** to *Approved*. Enter **Amount Paid** first if it isn't the default. The QR ticket is emailed within seconds, and a note pops up in the sheet |
-| Installment guest pays the rest before the party | Any of these: select the row → **🎃 Party → Mark selected row(s) as paid in full**; raise **Amount Paid** to 1200; or change **Payment Type** to *Full Payment*. The guest gets the same *Payment confirmed – Paid in full* email full payers get, with their QR code resent (same code), and no balance reminder |
+| Approve a payment | Set **Payment Status** to *Approved*. If the amount you verified differs from what the guest declared on the form, enter it in **Verified Amount** first. The QR ticket is emailed within seconds, and a note pops up in the sheet |
+| Installment guest pays the rest before the party | Select the row → **🎃 Party → Mark selected row(s) as paid in full**, or set **Verified Amount** to 1200. (Changing the form's own *Payment Type* to *Full Payment* also works, but that edits original data.) The guest gets the same *Payment confirmed – Paid in full* email full payers get, with their QR code resent (same code), and no balance reminder |
 | Reject a payment | Set **Payment Status** to *Rejected*. No email is sent, so contact the guest yourself |
 | Walk-in mode | Automatic during `WALK_IN_START`–`WALK_IN_END`. **🎃 Party → Walk-in mode** switches between automatic / on / off, and shows which one is active. Keep the form closed to the public during the party, or a guest registering from home would also be auto-approved |
 | Installment reminders | They go out automatically on `EVENT_DATE_ISO − REMINDER_DAYS_BEFORE`, around 9 AM. **🎃 Party → Turn automatic installment reminders on/off** switches that; **Send installment reminders now** sends them immediately. Nobody gets two reminders |
@@ -127,6 +129,7 @@ The fonts in the designs are Open Sans plus *Rustic Printed – Stamp* for the t
 ## Good to know
 - **Email quota:** a regular Gmail account can send about **100 emails/day** (1,500 with Google Workspace). Each guest now gets 2–3 emails. If you hit the limit, the menu actions pick up where they stopped the next day.
 - **QR images** are made by quickchart.io, with api.qrserver.com as a fallback. Only the Guest ID is sent to them.
-- **Payment types:** only **installments** can be partly paid. Any other approved payment type counts as paid in full, whatever the *Amount Paid* cell says. That includes **group payments** (e.g. Php 5000 for 5 people, where one member's row shows 5000 and the others show 0 or blank): every approved group member is fully paid, gets the normal "Paid in full" ticket, and shows **PAID** at the door. Their *Amount Paid* cells are left as they are.
+- **Payment types:** only **installments** can be partly paid. Any other approved payment type counts as paid in full, whatever amount was declared or verified. That includes **group payments** (e.g. Php 5000 for 5 people, where one member's row shows 5000 and the others show 0 or blank): every approved group member is fully paid, gets the normal "Paid in full" ticket, and shows **PAID** at the door. Their declared amounts are left as they are.
+- **Sheets set up with an older version:** earlier versions wrote into the form's own *Amount Paid* column at the door, on *Mark paid in full* and for walk-ins. Running **🎃 Party → Run setup** with this version first copies every approved guest's current amount into *Verified Amount*. You can then restore the original form values from **File → Version history** (or Door Notes, which say how much was collected), and nobody's paid status changes.
 - **Door photos** are emailed to `ORGANIZER_EMAIL` (subject *"Door payment: name (ID) – Php …"*) and count toward the daily email limit. If the email can't be sent, the payment is still recorded, the doorman sees a warning, and *Door Notes* says the photo wasn't emailed.
 - Payment and check-in status are always read live from the sheet, so a payment approved the night before shows **PAID** at the door.
